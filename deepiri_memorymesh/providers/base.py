@@ -84,7 +84,16 @@ def parse_generic_file(provider: str, project: str, file_path: Path) -> list[Mem
     provider_normalized = provider.strip().lower()
     if file_path.suffix.lower() == ".jsonl":
         conv_id = file_path.stem
-        messages = [json.loads(line) for line in raw.splitlines() if line.strip()]
+        messages: list[dict[str, Any]] = []
+        for line in raw.splitlines():
+            if not line.strip():
+                continue
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(item, dict):
+                messages.append(item)
         return records_from_messages(provider_normalized, project, conv_id, messages)
 
     parsed = json.loads(raw)
