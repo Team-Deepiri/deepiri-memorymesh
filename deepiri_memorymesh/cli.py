@@ -291,9 +291,34 @@ def transfer(
 
 
 @app.command()
-def tui(project: str = typer.Option("deepiri", help="Default project in TUI")) -> None:
+def go(
+    project: str = typer.Option(..., help="Project namespace"),
+    from_provider: str = typer.Option(..., "--from", help="Source provider"),
+    to_provider: str = typer.Option(..., "--to", help="Target provider"),
+) -> None:
+    """One-shot transfer workflow from source to target provider."""
+    mesh = _mesh()
+    path, count = mesh.transfer(
+        project=project,
+        from_provider=from_provider,
+        to_provider=to_provider,
+        out_path=None,
+        push_via_bridge=True,
+    )
+    typer.echo(f"Transferred {count} message(s) into {path}")
+    typer.echo(f"Next: open {to_provider} and import/use the transfer context if needed.")
+
+
+@app.command()
+def tui(
+    project: str | None = typer.Option(
+        None,
+        help="Project namespace (defaults to current directory name)",
+    ),
+) -> None:
     """Run interactive MemoryMesh TUI."""
-    run_tui(default_project=project)
+    resolved_project = project or Path.cwd().name or "default"
+    run_tui(default_project=resolved_project)
 
 
 @bundle_app.command("export")
