@@ -164,6 +164,61 @@ def query(
         typer.echo(f"    {snippet[:220]}")
 
 
+@app.command()
+def stats(project: str = typer.Option(..., help="Project namespace")) -> None:
+    """Show memory layer stats for a project."""
+    mesh = _mesh()
+    s = mesh.stats(project)
+    typer.echo(f"project={project}")
+    typer.echo(f"messages={s['messages']}")
+    typer.echo(f"conversations={s['conversations']}")
+    typer.echo(f"summaries={s['summaries']}")
+    typer.echo(f"embeddings={s['embeddings']}")
+
+
+@app.command()
+def serve(
+    host: str = typer.Option("127.0.0.1", help="Bind host"),
+    port: int = typer.Option(8765, min=1, max=65535, help="Bind port"),
+) -> None:
+    """Run local MemoryMesh service API for extension/plugin integrations."""
+    run_service(host=host, port=port)
+
+
+@app.command("integrations")
+def integrations_list() -> None:
+    """List installable code-app integration targets."""
+    for target in list_targets():
+        typer.echo(f"{target.key:10} {target.extension_hint}")
+
+
+@app.command("install-integration")
+def install_integration(
+    target: str = typer.Option(..., help="Target code app: cursor/claude/gemini/opencode/continue"),
+    project: str = typer.Option(..., help="Project namespace"),
+    service_url: str = typer.Option("http://127.0.0.1:8765", help="MemoryMesh service URL"),
+) -> None:
+    """Install bridge script + integration template for a code app."""
+    script_path = install_bridge_script(target=target, project=project, service_url=service_url)
+    template_path = write_integration_template(target=target, project=project)
+    typer.echo(f"Installed bridge script: {script_path}")
+    typer.echo(f"Wrote integration template: {template_path}")
+
+
+@app.command("generate-hook-snippets")
+def generate_hook_snippets(
+    project: str = typer.Option(..., help="Project namespace"),
+    out_dir: Path = typer.Option(
+        Path("./memorymesh-hooks"),
+        help="Directory to write ready-to-paste hook snippets",
+    ),
+) -> None:
+    """Generate ready-to-paste hook configs for supported code apps."""
+    files = write_hook_snippets(project=project, output_dir=out_dir)
+    for path in files:
+        typer.echo(f"Wrote {path}")
+
+
 @bundle_app.command("export")
 def bundle_export(
     project: str = typer.Option(...),
