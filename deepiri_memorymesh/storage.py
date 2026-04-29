@@ -167,6 +167,36 @@ class MemoryStore:
             )
             return list(cur.fetchall())
 
+    def project_stats(self, project: str) -> dict[str, int]:
+        with self.connect() as conn:
+            msg_count = conn.execute(
+                "SELECT COUNT(*) AS c FROM memory_messages WHERE project = ?",
+                (project,),
+            ).fetchone()["c"]
+            conv_count = conn.execute(
+                "SELECT COUNT(DISTINCT conversation_id) AS c FROM memory_messages WHERE project = ?",
+                (project,),
+            ).fetchone()["c"]
+            sum_count = conn.execute(
+                "SELECT COUNT(*) AS c FROM memory_summaries WHERE project = ?",
+                (project,),
+            ).fetchone()["c"]
+            emb_count = conn.execute(
+                """
+                SELECT COUNT(*) AS c
+                FROM memory_embeddings e
+                JOIN memory_messages m ON e.message_id = m.id
+                WHERE m.project = ?
+                """,
+                (project,),
+            ).fetchone()["c"]
+        return {
+            "messages": int(msg_count),
+            "conversations": int(conv_count),
+            "summaries": int(sum_count),
+            "embeddings": int(emb_count),
+        }
+
     def list_embeddings(self, project: str) -> list[sqlite3.Row]:
         with self.connect() as conn:
             cur = conn.execute(
