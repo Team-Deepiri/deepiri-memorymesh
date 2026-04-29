@@ -112,6 +112,7 @@ memorymesh integrations
 memorymesh install-integration --target cursor --project deepiri
 memorymesh install-integration --target opencode --project deepiri
 memorymesh generate-hook-snippets --project deepiri --out-dir ./memorymesh-hooks
+memorymesh install-native-all --project deepiri
 ```
 
 Transfer context between providers:
@@ -119,6 +120,7 @@ Transfer context between providers:
 ```bash
 memorymesh transfer --project deepiri --from claude --to opencode
 memorymesh transfer --project deepiri --from claude --to opencode --push
+memorymesh go --project deepiri --from claude --to gemini
 ```
 
 Run interactive TUI:

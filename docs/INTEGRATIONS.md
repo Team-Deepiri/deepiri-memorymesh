@@ -28,6 +28,7 @@ API endpoints:
 ```bash
 memorymesh install-integration --target cursor --project deepiri
 memorymesh install-integration --target opencode --project deepiri
+memorymesh install-native-all --project deepiri
 ```
 
 This installs:
@@ -67,6 +68,7 @@ You can package one provider's memory context and send it to another:
 ```bash
 memorymesh transfer --project deepiri --from claude --to opencode
 memorymesh transfer --project deepiri --from claude --to opencode --push
+memorymesh go --project deepiri --from claude --to gemini
 ```
 
 - Without `--push`, it writes a transfer JSON bundle.
