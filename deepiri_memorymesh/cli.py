@@ -5,6 +5,13 @@ from pathlib import Path
 import typer
 
 from .config import Settings
+from .integrations import (
+    install_bridge_script,
+    list_targets,
+    write_hook_snippets,
+    write_integration_template,
+)
+from .service_api import run_service
 from .sync_service import MemoryMesh
 
 app = typer.Typer(help="Deepiri MemoryMesh CLI")
