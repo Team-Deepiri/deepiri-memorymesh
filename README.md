@@ -114,6 +114,19 @@ memorymesh install-integration --target opencode --project deepiri
 memorymesh generate-hook-snippets --project deepiri --out-dir ./memorymesh-hooks
 ```
 
+Transfer context between providers:
+
+```bash
+memorymesh transfer --project deepiri --from claude --to opencode
+memorymesh transfer --project deepiri --from claude --to opencode --push
+```
+
+Run interactive TUI:
+
+```bash
+memorymesh tui --project deepiri
+```
+
 Search memory:
 
 ```bash
