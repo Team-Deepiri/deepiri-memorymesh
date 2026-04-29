@@ -1,6 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
+import sys
+import time
+from urllib.error import URLError
+from urllib.request import urlopen
 
 import typer
 
@@ -27,6 +32,33 @@ app.add_typer(bundle_app, name="bundle")
 def _mesh() -> MemoryMesh:
     settings = Settings.load()
     return MemoryMesh(settings)
+
+
+def _ensure_service_running(host: str = "127.0.0.1", port: int = 8765) -> bool:
+    health_url = f"http://{host}:{port}/health"
+    try:
+        with urlopen(health_url, timeout=0.5) as resp:
+            return resp.status == 200
+    except URLError:
+        pass
+    except Exception:
+        pass
+
+    subprocess.Popen(
+        [sys.executable, "-m", "deepiri_memorymesh.cli", "serve", "--host", host, "--port", str(port)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    for _ in range(20):
+        time.sleep(0.15)
+        try:
+            with urlopen(health_url, timeout=0.5) as resp:
+                if resp.status == 200:
+                    return True
+        except Exception:
+            continue
+    return False
 
 
 @app.command()
@@ -317,6 +349,9 @@ def tui(
     ),
 ) -> None:
     """Run interactive MemoryMesh TUI."""
+    ok = _ensure_service_running()
+    if not ok:
+        typer.echo("warning: service did not respond; TUI will still start")
     resolved_project = project or Path.cwd().name or "default"
     run_tui(default_project=resolved_project)
 
