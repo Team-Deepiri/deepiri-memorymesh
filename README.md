@@ -39,6 +39,10 @@ Researched targets to add next (config placeholders included):
 - Local models via LM Studio
 - Local models via llama.cpp server
 
+Provider research notes and integration status:
+
+- `docs/PROVIDERS.md`
+
 ## Quick start
 
 ```bash
@@ -61,6 +65,18 @@ memorymesh ingest --provider claude --project deepiri --file /path/to/claude_exp
 memorymesh ingest --provider cursor --project deepiri --file /path/to/cursor_chat.jsonl
 ```
 
+Bulk sync a provider folder:
+
+```bash
+memorymesh sync --provider cursor --project deepiri --source-dir ~/.cursor
+```
+
+Auto-sync all configured providers:
+
+```bash
+memorymesh sync-auto --project deepiri
+```
+
 Run compression:
 
 ```bash
@@ -71,6 +87,12 @@ Build embeddings:
 
 ```bash
 memorymesh embed --project deepiri
+```
+
+Run full pipeline:
+
+```bash
+memorymesh pipeline --project deepiri --auto-sync
 ```
 
 Search memory:
@@ -86,6 +108,13 @@ memorymesh state put --project deepiri --agent cursor --key current_task --value
 memorymesh state get --project deepiri --agent claude --key current_task
 ```
 
+Export/import portable context bundles:
+
+```bash
+memorymesh bundle export --project deepiri --out ./deepiri.bundle.json
+memorymesh bundle import --bundle ./deepiri.bundle.json --project deepiri_clone
+```
+
 ## Configuration
 
 Default config lives at:
@@ -97,6 +126,7 @@ You can set:
 - Storage path (SQLite)
 - Embedding backend (`sentence-transformers` or deterministic fallback)
 - Provider adapter mapping
+- Provider source paths for auto-sync
 - Compression pipeline parameters
 
 ## Notes

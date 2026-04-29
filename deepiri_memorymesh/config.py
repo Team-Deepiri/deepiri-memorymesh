@@ -38,6 +38,25 @@ class Settings:
     )
     compression_max_chars: int = 6000
     compression_target_chars: int = 1200
+    provider_paths: dict[str, str] = field(
+        default_factory=lambda: {
+            "claude": "~/.claude",
+            "gemini": "~/.config/google-gemini",
+            "openai": "~/.config/openai",
+            "cursor": "~/.cursor",
+            "opencode": "~/.config/opencode",
+            "copilot": "~/.config/github-copilot",
+            "continue": "~/.continue",
+            "aider": "~/.aider",
+            "cline": "~/.cline",
+            "cody": "~/.config/sourcegraph",
+            "perplexity": "~/.config/perplexity",
+            "replit": "~/.config/replit",
+            "ollama_local": "~/.ollama",
+            "lmstudio_local": "~/.cache/lm-studio",
+            "llamacpp_local": "~/.local/share/llama.cpp",
+        }
+    )
 
     @classmethod
     def load(cls, path: Path | None = None) -> "Settings":
@@ -53,6 +72,7 @@ class Settings:
             providers=raw.get("providers") or cls().providers,
             compression_max_chars=int(raw.get("compression_max_chars", 6000)),
             compression_target_chars=int(raw.get("compression_target_chars", 1200)),
+            provider_paths=raw.get("provider_paths") or cls().provider_paths,
         )
 
     def save(self, path: Path | None = None) -> None:
@@ -64,5 +84,6 @@ class Settings:
             "providers": self.providers,
             "compression_max_chars": self.compression_max_chars,
             "compression_target_chars": self.compression_target_chars,
+            "provider_paths": self.provider_paths,
         }
         cfg_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")

@@ -9,7 +9,9 @@ from .sync_service import MemoryMesh
 
 app = typer.Typer(help="Deepiri MemoryMesh CLI")
 state_app = typer.Typer(help="Manage shared agent state")
+bundle_app = typer.Typer(help="Export/import portable context bundles")
 app.add_typer(state_app, name="state")
+app.add_typer(bundle_app, name="bundle")
 
 
 def _mesh() -> MemoryMesh:
@@ -38,6 +40,62 @@ def ingest(
 
 
 @app.command()
+def providers() -> None:
+    """List configured providers and default source paths."""
+    settings = Settings.load()
+    for name in settings.providers:
+        path = settings.provider_paths.get(name, "")
+        typer.echo(f"{name:16} {path}")
+
+
+@app.command()
+def sync(
+    provider: str = typer.Option(..., help="Provider name"),
+    project: str = typer.Option(..., help="Project namespace"),
+    source_dir: Path = typer.Option(..., exists=True, file_okay=False, help="Directory of exports"),
+    recursive: bool = typer.Option(True, help="Recursively scan JSON/JSONL"),
+) -> None:
+    """Bulk ingest all JSON/JSONL files for a provider."""
+    mesh = _mesh()
+    processed, inserted = mesh.sync_directory(
+        provider=provider,
+        project=project,
+        directory=source_dir,
+        recursive=recursive,
+    )
+    typer.echo(f"Processed {processed} file(s), inserted {inserted} message(s)")
+
+
+@app.command("sync-auto")
+def sync_auto(
+    project: str = typer.Option(..., help="Project namespace"),
+    recursive: bool = typer.Option(True, help="Recursively scan JSON/JSONL"),
+) -> None:
+    """Sync all providers using configured default paths."""
+    settings = Settings.load()
+    mesh = MemoryMesh(settings)
+    total_files = 0
+    total_messages = 0
+    for provider in settings.providers:
+        raw = settings.provider_paths.get(provider, "")
+        if not raw:
+            continue
+        source = Path(raw).expanduser()
+        if not source.exists() or not source.is_dir():
+            continue
+        processed, inserted = mesh.sync_directory(
+            provider=provider,
+            project=project,
+            directory=source,
+            recursive=recursive,
+        )
+        total_files += processed
+        total_messages += inserted
+        typer.echo(f"{provider}: files={processed} messages={inserted}")
+    typer.echo(f"TOTAL files={total_files} messages={total_messages}")
+
+
+@app.command()
 def compress(project: str = typer.Option(..., help="Project namespace")) -> None:
     """Generate compressed memory summaries."""
     mesh = _mesh()
@@ -51,6 +109,30 @@ def embed(project: str = typer.Option(..., help="Project namespace")) -> None:
     mesh = _mesh()
     count = mesh.embed_project(project)
     typer.echo(f"Embedded {count} message(s)")
+
+
+@app.command("pipeline")
+def pipeline(
+    project: str = typer.Option(..., help="Project namespace"),
+    auto_sync: bool = typer.Option(False, help="Run sync-auto before compress/embed"),
+) -> None:
+    """Run end-to-end memory pipeline."""
+    mesh = _mesh()
+    if auto_sync:
+        settings = mesh.settings
+        total_files = 0
+        total_messages = 0
+        for provider in settings.providers:
+            source = Path(settings.provider_paths.get(provider, "")).expanduser()
+            if not source.exists() or not source.is_dir():
+                continue
+            processed, inserted = mesh.sync_directory(provider, project, source, recursive=True)
+            total_files += processed
+            total_messages += inserted
+        typer.echo(f"sync-auto: files={total_files} messages={total_messages}")
+    summaries = mesh.compress_project(project)
+    embeds = mesh.embed_project(project)
+    typer.echo(f"pipeline complete: summaries={summaries} embeddings={embeds}")
 
 
 @app.command()
@@ -71,6 +153,28 @@ def query(
         )
         snippet = str(row["content"]).replace("\n", " ")
         typer.echo(f"    {snippet[:220]}")
+
+
+@bundle_app.command("export")
+def bundle_export(
+    project: str = typer.Option(...),
+    out: Path = typer.Option(..., help="Bundle output path, e.g. ./bundle.json"),
+) -> None:
+    """Export portable memory bundle."""
+    mesh = _mesh()
+    path = mesh.export_bundle(project=project, output_path=out)
+    typer.echo(f"Exported bundle to {path}")
+
+
+@bundle_app.command("import")
+def bundle_import(
+    bundle: Path = typer.Option(..., exists=True, dir_okay=False, help="Bundle JSON path"),
+    project: str | None = typer.Option(None, help="Optional project override"),
+) -> None:
+    """Import portable memory bundle."""
+    mesh = _mesh()
+    inserted = mesh.import_bundle(bundle_path=bundle, project_override=project)
+    typer.echo(f"Imported {inserted} message(s)")
 
 
 @state_app.command("put")
