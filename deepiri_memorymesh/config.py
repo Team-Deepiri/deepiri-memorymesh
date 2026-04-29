@@ -57,6 +57,26 @@ class Settings:
             "llamacpp_local": "~/.local/share/llama.cpp",
         }
     )
+    provider_globs: dict[str, list[str]] = field(
+        default_factory=lambda: {
+            "claude": ["**/*.json", "**/*.jsonl"],
+            "gemini": ["**/*.json", "**/*.jsonl"],
+            "openai": ["**/*.json", "**/*.jsonl"],
+            "cursor": ["**/*chat*.json", "**/*chat*.jsonl", "**/*conversation*.json*"],
+            "opencode": ["**/*.json", "**/*.jsonl"],
+            "jsonl": ["**/*.jsonl"],
+            "copilot": ["**/*.json", "**/*.jsonl"],
+            "continue": ["**/*.json", "**/*.jsonl"],
+            "aider": ["**/*.json", "**/*.jsonl", "**/*.md"],
+            "cline": ["**/*.json", "**/*.jsonl"],
+            "cody": ["**/*.json", "**/*.jsonl"],
+            "perplexity": ["**/*.json", "**/*.jsonl"],
+            "replit": ["**/*.json", "**/*.jsonl"],
+            "ollama_local": ["**/*.json", "**/*.jsonl", "**/*.log"],
+            "lmstudio_local": ["**/*.json", "**/*.jsonl"],
+            "llamacpp_local": ["**/*.json", "**/*.jsonl", "**/*.log"],
+        }
+    )
 
     @classmethod
     def load(cls, path: Path | None = None) -> "Settings":
