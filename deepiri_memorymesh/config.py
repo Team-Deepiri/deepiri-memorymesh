@@ -105,5 +105,6 @@ class Settings:
             "compression_max_chars": self.compression_max_chars,
             "compression_target_chars": self.compression_target_chars,
             "provider_paths": self.provider_paths,
+            "provider_globs": self.provider_globs,
         }
         cfg_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
