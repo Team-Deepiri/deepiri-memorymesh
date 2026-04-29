@@ -139,3 +139,46 @@ class MemoryMesh:
 
     def stats(self, project: str) -> dict[str, int]:
         return self.store.project_stats(project)
+
+    def transfer(
+        self,
+        project: str,
+        from_provider: str,
+        to_provider: str,
+        out_path: Path | None = None,
+        push_via_bridge: bool = False,
+    ) -> tuple[Path, int]:
+        source = from_provider.strip().lower()
+        target = to_provider.strip().lower()
+        rows = [dict(r) for r in self.store.list_messages_by_provider(project, source)]
+        payload = {
+            "project": project,
+            "from_provider": source,
+            "to_provider": target,
+            "conversation_id": f"transfer-{source}-to-{target}",
+            "messages": [
+                {
+                    "role": row["role"],
+                    "content": row["content"],
+                    "timestamp": row["timestamp"],
+                    "metadata": {
+                        "origin_provider": row["provider"],
+                        "origin_conversation_id": row["conversation_id"],
+                        "transfer": True,
+                    },
+                }
+                for row in rows
+            ],
+        }
+        if out_path is None:
+            out_dir = Path.home() / ".config" / "deepiri-memorymesh" / "transfers"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            out_path = out_dir / f"{project}.{source}-to-{target}.json"
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8")
+
+        if push_via_bridge:
+            bridge = Path.home() / ".local" / "bin" / f"memorymesh-bridge-{target}"
+            if bridge.exists():
+                subprocess.run([str(bridge), str(out_path)], check=False)
+        return out_path, len(rows)
