@@ -6,6 +6,7 @@ import typer
 
 from .config import Settings
 from .integrations import (
+    install_native_integration,
     install_bridge_script,
     list_targets,
     write_hook_snippets,
@@ -14,6 +15,7 @@ from .integrations import (
 from .service_api import run_service
 from .sync_service import MemoryMesh
 from .tui import run_tui
+from .providers import NATIVE_PROVIDER_PARSERS
 
 app = typer.Typer(help="Deepiri MemoryMesh CLI")
 state_app = typer.Typer(help="Manage shared agent state")
@@ -54,6 +56,17 @@ def providers() -> None:
     for name in settings.providers:
         path = settings.provider_paths.get(name, "")
         typer.echo(f"{name:16} {path}")
+
+
+@app.command("provider-health")
+def provider_health() -> None:
+    """Show native parser coverage vs fallback providers."""
+    settings = Settings.load()
+    for name in settings.providers:
+        key = name.strip().lower()
+        native = "native" if key in NATIVE_PROVIDER_PARSERS else "fallback"
+        parser = NATIVE_PROVIDER_PARSERS.get(key, "parse_generic_file")
+        typer.echo(f"{key:16} {native:8} {parser}")
 
 
 @app.command()
