@@ -45,6 +45,7 @@ Researched targets to add next (config placeholders included):
 Provider research notes and integration status:
 
 - `docs/PROVIDERS.md`
+- `docs/INTEGRATIONS.md`
 
 ## Quick start
 
