@@ -6,6 +6,9 @@ Cross-provider memory sync for coding assistants and agent tools.
 store them as persistent memory, compress history, embed searchable chunks, and share agent
 state across providers and local models.
 
+It also supports non-CLI app integrations via a local service API + bridge scripts for
+third-party extension/plugin hooks.
+
 ## What it supports
 
 - Cross-provider context ingestion (initial adapters included)
