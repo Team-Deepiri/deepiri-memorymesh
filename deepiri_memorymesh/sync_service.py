@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 import json
 from pathlib import Path
+import subprocess
 
 from .compression import compress_conversation
 from .config import Settings
