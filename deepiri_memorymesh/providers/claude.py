@@ -37,6 +37,34 @@ def _claude_messages_from_mapping(mapping: dict[str, Any]) -> list[dict[str, Any
 
 def parse_claude_file(provider: str, project: str, file_path: Path) -> list[MemoryRecord]:
     if file_path.suffix.lower() == ".jsonl":
+        messages: list[dict[str, Any]] = []
+        for line in file_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(item, dict):
+                continue
+            # Claude Code history.jsonl often stores user command text in `display`.
+            display = normalize_content(item.get("display") or item.get("content"))
+            if not display:
+                continue
+            messages.append(
+                {
+                    "role": "user",
+                    "content": display,
+                    "timestamp": safe_str(item.get("timestamp")) or now_iso(),
+                    "metadata": {
+                        "source": "claude-history",
+                        "session_id": safe_str(item.get("sessionId")),
+                        "project_path": safe_str(item.get("project")),
+                    },
+                }
+            )
+        if messages:
+            return records_from_messages(provider, project, file_path.stem, messages)
         return parse_generic_file(provider, project, file_path)
     parsed = json.loads(file_path.read_text(encoding="utf-8"))
     if isinstance(parsed, dict):
