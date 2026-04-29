@@ -60,6 +60,18 @@ memorymesh-bridge-opencode /path/to/export.jsonl
 
 The bridge posts into local service API and syncs messages into persistent memory.
 
+## Provider-to-provider transfer
+
+You can package one provider's memory context and send it to another:
+
+```bash
+memorymesh transfer --project deepiri --from claude --to opencode
+memorymesh transfer --project deepiri --from claude --to opencode --push
+```
+
+- Without `--push`, it writes a transfer JSON bundle.
+- With `--push`, it also calls `memorymesh-bridge-<target>` if installed.
+
 ## Supported integration targets
 
 - `cursor`
