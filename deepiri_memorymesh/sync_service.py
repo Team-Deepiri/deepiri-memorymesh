@@ -32,16 +32,21 @@ class MemoryMesh:
         project: str,
         directory: Path,
         recursive: bool = True,
+        include_globs: list[str] | None = None,
     ) -> tuple[int, int]:
         if not directory.exists() or not directory.is_dir():
             raise ValueError(f"Directory not found: {directory}")
-        patterns = ("*.json", "*.jsonl")
+        patterns = include_globs or ["*.json", "*.jsonl"]
         files: list[Path] = []
         for pattern in patterns:
+            normalized = pattern
             if recursive:
                 files.extend(directory.rglob(pattern))
             else:
-                files.extend(directory.glob(pattern))
+                # For non-recursive mode, drop leading "**/" style hints.
+                if normalized.startswith("**/"):
+                    normalized = normalized[3:]
+                files.extend(directory.glob(normalized))
         inserted = 0
         processed = 0
         for path in sorted(files):
