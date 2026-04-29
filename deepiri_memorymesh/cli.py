@@ -226,6 +226,35 @@ def generate_hook_snippets(
         typer.echo(f"Wrote {path}")
 
 
+@app.command()
+def transfer(
+    project: str = typer.Option(..., help="Project namespace"),
+    from_provider: str = typer.Option(..., "--from", help="Source provider"),
+    to_provider: str = typer.Option(..., "--to", help="Target provider"),
+    out: Path | None = typer.Option(None, help="Output transfer file path"),
+    push: bool = typer.Option(
+        False,
+        help="Push transfer file to target provider bridge if installed",
+    ),
+) -> None:
+    """Transfer context from one provider memory layer to another."""
+    mesh = _mesh()
+    path, count = mesh.transfer(
+        project=project,
+        from_provider=from_provider,
+        to_provider=to_provider,
+        out_path=out,
+        push_via_bridge=push,
+    )
+    typer.echo(f"Transferred {count} message(s) into {path}")
+
+
+@app.command()
+def tui(project: str = typer.Option("deepiri", help="Default project in TUI")) -> None:
+    """Run interactive MemoryMesh TUI."""
+    run_tui(default_project=project)
+
+
 @bundle_app.command("export")
 def bundle_export(
     project: str = typer.Option(...),
