@@ -93,6 +93,7 @@ class Settings:
             compression_max_chars=int(raw.get("compression_max_chars", 6000)),
             compression_target_chars=int(raw.get("compression_target_chars", 1200)),
             provider_paths=raw.get("provider_paths") or cls().provider_paths,
+            provider_globs=raw.get("provider_globs") or cls().provider_globs,
         )
 
     def save(self, path: Path | None = None) -> None:
