@@ -13,6 +13,7 @@ from .integrations import (
 )
 from .service_api import run_service
 from .sync_service import MemoryMesh
+from .tui import run_tui
 
 app = typer.Typer(help="Deepiri MemoryMesh CLI")
 state_app = typer.Typer(help="Manage shared agent state")
