@@ -99,10 +99,31 @@ Run full pipeline:
 memorymesh pipeline --project deepiri --auto-sync
 ```
 
+Run local integration service (for app extensions/plugins):
+
+```bash
+memorymesh serve --host 127.0.0.1 --port 8765
+```
+
+List/install app integrations:
+
+```bash
+memorymesh integrations
+memorymesh install-integration --target cursor --project deepiri
+memorymesh install-integration --target opencode --project deepiri
+memorymesh generate-hook-snippets --project deepiri --out-dir ./memorymesh-hooks
+```
+
 Search memory:
 
 ```bash
 memorymesh query --project deepiri --q "where did we discuss retrieval strategy?"
+```
+
+Inspect memory layers:
+
+```bash
+memorymesh stats --project deepiri
 ```
 
 Share agent state:
