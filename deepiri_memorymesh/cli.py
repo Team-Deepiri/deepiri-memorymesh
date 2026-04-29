@@ -64,11 +64,14 @@ def sync(
 ) -> None:
     """Bulk ingest all JSON/JSONL files for a provider."""
     mesh = _mesh()
+    settings = mesh.settings
+    globs = settings.provider_globs.get(provider.strip().lower(), ["**/*.json", "**/*.jsonl"])
     processed, inserted = mesh.sync_directory(
         provider=provider,
         project=project,
         directory=source_dir,
         recursive=recursive,
+        include_globs=globs,
     )
     typer.echo(f"Processed {processed} file(s), inserted {inserted} message(s)")
 
@@ -135,7 +138,10 @@ def pipeline(
             source = Path(settings.provider_paths.get(provider, "")).expanduser()
             if not source.exists() or not source.is_dir():
                 continue
-            processed, inserted = mesh.sync_directory(provider, project, source, recursive=True)
+            globs = settings.provider_globs.get(provider, ["**/*.json", "**/*.jsonl"])
+            processed, inserted = mesh.sync_directory(
+                provider, project, source, recursive=True, include_globs=globs
+            )
             total_files += processed
             total_messages += inserted
         typer.echo(f"sync-auto: files={total_files} messages={total_messages}")
