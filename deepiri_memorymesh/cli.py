@@ -90,11 +90,13 @@ def sync_auto(
         source = Path(raw).expanduser()
         if not source.exists() or not source.is_dir():
             continue
+        globs = settings.provider_globs.get(provider, ["**/*.json", "**/*.jsonl"])
         processed, inserted = mesh.sync_directory(
             provider=provider,
             project=project,
             directory=source,
             recursive=recursive,
+            include_globs=globs,
         )
         total_files += processed
         total_messages += inserted
