@@ -135,3 +135,6 @@ class MemoryMesh:
 
     def get_state(self, project: str, agent: str, key: str) -> str | None:
         return self.store.get_agent_state(project, agent, key)
+
+    def stats(self, project: str) -> dict[str, int]:
+        return self.store.project_stats(project)
