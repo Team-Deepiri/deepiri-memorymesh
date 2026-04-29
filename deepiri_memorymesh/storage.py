@@ -106,6 +106,19 @@ class MemoryStore:
             )
             return list(cur.fetchall())
 
+    def list_messages_by_provider(self, project: str, provider: str) -> list[sqlite3.Row]:
+        with self.connect() as conn:
+            cur = conn.execute(
+                """
+                SELECT id, provider, project, conversation_id, role, content, timestamp, metadata_json
+                FROM memory_messages
+                WHERE project = ? AND provider = ?
+                ORDER BY timestamp ASC, id ASC
+                """,
+                (project, provider),
+            )
+            return list(cur.fetchall())
+
     def upsert_summary(self, rec: CompressedRecord) -> None:
         with self.connect() as conn:
             conn.execute(
