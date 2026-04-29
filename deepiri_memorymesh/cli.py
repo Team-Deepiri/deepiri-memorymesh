@@ -225,6 +225,34 @@ def install_integration(
     typer.echo(f"Wrote integration template: {template_path}")
 
 
+@app.command("install-native")
+def install_native(
+    target: str = typer.Option(..., help="Target app: claude/cursor/gemini/opencode/continue/aider"),
+    project: str = typer.Option(..., help="Project namespace"),
+    service_url: str = typer.Option("http://127.0.0.1:8765", help="MemoryMesh service URL"),
+) -> None:
+    """Install native per-provider integration config/plugin/wrapper."""
+    paths = install_native_integration(target=target, project=project, service_url=service_url)
+    for path in paths:
+        typer.echo(f"Wrote {path}")
+
+
+@app.command("install-native-all")
+def install_native_all(
+    project: str = typer.Option(..., help="Project namespace"),
+    service_url: str = typer.Option("http://127.0.0.1:8765", help="MemoryMesh service URL"),
+) -> None:
+    """Install native integrations for all supported providers."""
+    for target in ["claude", "cursor", "gemini", "opencode", "continue", "aider"]:
+        try:
+            paths = install_native_integration(target=target, project=project, service_url=service_url)
+            typer.echo(f"{target}:")
+            for path in paths:
+                typer.echo(f"  - {path}")
+        except Exception as exc:
+            typer.echo(f"{target}: failed ({exc})")
+
+
 @app.command("generate-hook-snippets")
 def generate_hook_snippets(
     project: str = typer.Option(..., help="Project namespace"),
