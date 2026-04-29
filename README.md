@@ -22,10 +22,10 @@ third-party extension/plugin hooks.
 
 Implemented or scaffolded adapters:
 
-- Claude / Anthropic exports
+- Claude / Anthropic exports (dedicated parser)
 - Gemini exports
 - OpenAI ChatGPT exports
-- Cursor chat/context exports
+- Cursor chat/context exports (dedicated parser)
 - OpenCode-style JSON logs
 - Generic JSONL conversation logs
 
