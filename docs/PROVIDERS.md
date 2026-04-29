@@ -7,6 +7,7 @@ This matrix tracks practical ways to sync context/memory into MemoryMesh.
 - Default mode: local export/history file ingestion (`.json`, `.jsonl`)
 - Optional mode: provider API pullers (future, token-gated)
 - Local-model mode: filesystem logs and prompt history directories
+- Integration mode: third-party extensions/plugins posting to local service API
 
 ## Providers
 
