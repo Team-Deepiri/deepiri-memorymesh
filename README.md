@@ -1,0 +1,106 @@
+# deepiri-memorymesh
+
+Cross-provider memory sync for coding assistants and agent tools.
+
+`deepiri-memorymesh` lets you ingest conversation exports/context files from multiple tools,
+store them as persistent memory, compress history, embed searchable chunks, and share agent
+state across providers and local models.
+
+## What it supports
+
+- Cross-provider context ingestion (initial adapters included)
+- Cross-model memory syncing through one shared memory store
+- Conversation compression pipelines (extractive + rolling summary)
+- Persistent memory layers (raw messages, compressed summaries, agent state)
+- Retrieval with embeddings and hybrid search
+- Agent state sharing (project/session-level state snapshots)
+
+## Providers and tools covered
+
+Implemented or scaffolded adapters:
+
+- Claude / Anthropic exports
+- Gemini exports
+- OpenAI ChatGPT exports
+- Cursor chat/context exports
+- OpenCode-style JSON logs
+- Generic JSONL conversation logs
+
+Researched targets to add next (config placeholders included):
+
+- GitHub Copilot Chat
+- Continue.dev
+- Aider logs
+- Cline / Roo Code
+- Sourcegraph Cody
+- Perplexity exports
+- Replit Agent history
+- Local models via Ollama
+- Local models via LM Studio
+- Local models via llama.cpp server
+
+## Quick start
+
+```bash
+cd deepiri-memorymesh
+python -m venv .venv
+source .venv/bin/activate
+pip install -e .
+```
+
+Initialize storage:
+
+```bash
+memorymesh init
+```
+
+Ingest conversation files:
+
+```bash
+memorymesh ingest --provider claude --project deepiri --file /path/to/claude_export.json
+memorymesh ingest --provider cursor --project deepiri --file /path/to/cursor_chat.jsonl
+```
+
+Run compression:
+
+```bash
+memorymesh compress --project deepiri
+```
+
+Build embeddings:
+
+```bash
+memorymesh embed --project deepiri
+```
+
+Search memory:
+
+```bash
+memorymesh query --project deepiri --q "where did we discuss retrieval strategy?"
+```
+
+Share agent state:
+
+```bash
+memorymesh state put --project deepiri --agent cursor --key current_task --value "memory sync pipeline"
+memorymesh state get --project deepiri --agent claude --key current_task
+```
+
+## Configuration
+
+Default config lives at:
+
+- `~/.config/deepiri-memorymesh/config.yaml`
+
+You can set:
+
+- Storage path (SQLite)
+- Embedding backend (`sentence-transformers` or deterministic fallback)
+- Provider adapter mapping
+- Compression pipeline parameters
+
+## Notes
+
+- This first version is local-first and file-based.
+- It does not call closed provider APIs directly by default.
+- You can add API pullers later in `deepiri_memorymesh/providers/`.
