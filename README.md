@@ -1,4 +1,4 @@
-# MemoryMesh 🧠
+# Deepiri MemoryMesh 🧠
 
 **Drop-in memory layer for ANY AI agent**
 
