@@ -3,23 +3,20 @@ requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "deepiri-memorymesh"
+name = "memorymesh"
 version = "0.1.0"
-description = "Cross-provider memory sync and retrieval for AI coding tools"
+description = "Drop-in memory layer for ANY AI agent"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = [
-  "typer>=0.12.3",
-  "PyYAML>=6.0.1",
-]
+dependencies = []
 
 [project.optional-dependencies]
 embeddings = [
-  "sentence-transformers>=3.0.1",
+   "sentence-transformers>=3.0.1",
 ]
 
 [project.scripts]
 memorymesh = "deepiri_memorymesh.cli:app"
 
 [tool.setuptools]
-packages = ["deepiri_memorymesh", "deepiri_memorymesh.providers"]
+packages = ["deepiri_memorymesh", "memorymesh", "deepiri_memorymesh.providers"]
