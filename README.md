@@ -78,3 +78,15 @@ memorymesh package import ./udata.tar.gz -p myproject
 ```
 
 See [docs/U_DATA_PACKAGING.md](docs/U_DATA_PACKAGING.md) and [docs/STORAGE_PATHS.md](docs/STORAGE_PATHS.md).
+
+## Export chat & memory
+
+Export everything for a project (messages, summaries, agent state) as plain text, Markdown, or JSON:
+
+```bash
+memorymesh export -p myproject --format md -o ./export.md
+memorymesh export -p myproject --format txt --clipboard
+memorymesh export -p myproject --format json --provider cursor
+```
+
+The TUI (`memorymesh tui`) adds **[7] Export**. The HTTP API accepts `POST /export` with `{"project":"...", "format":"md", "clipboard": true}`.

@@ -331,6 +331,59 @@ def stats(project: str = typer.Option(..., help="Project namespace")) -> None:
 
 
 @app.command()
+def export(
+    project: str = typer.Option(..., "-p", "--project", help="Project namespace"),
+    format: str = typer.Option(
+        "md",
+        "--format",
+        "-f",
+        help="Export format: txt, md (markdown), or json",
+    ),
+    out: Path | None = typer.Option(
+        None,
+        "-o",
+        "--out",
+        help="Write export to this file (prints to stdout if omitted)",
+    ),
+    clipboard: bool = typer.Option(
+        False,
+        "--clipboard",
+        help="Copy export to system clipboard (wl-copy, xclip, xsel, or pbcopy)",
+    ),
+    provider: str | None = typer.Option(
+        None,
+        "--provider",
+        help="Limit export to one provider's messages",
+    ),
+) -> None:
+    """Export all chat/memory for a project as txt, markdown, or JSON."""
+    mesh = _mesh()
+    mesh.init()
+    content, written, clipboard_ok = mesh.export_project(
+        project=project,
+        fmt=format,
+        provider=provider,
+        output_path=out,
+        to_clipboard=clipboard,
+    )
+    if written:
+        typer.echo(f"Exported → {written}")
+    if clipboard:
+        if clipboard_ok:
+            typer.echo("Copied to clipboard.")
+        else:
+            typer.echo(
+                "warning: could not copy to clipboard "
+                "(install wl-clipboard, xclip, or xsel on Linux)",
+                err=True,
+            )
+    if not written and not clipboard:
+        typer.echo(content, nl=False)
+        if not content.endswith("\n"):
+            typer.echo("")
+
+
+@app.command()
 def serve(
     host: str = typer.Option("127.0.0.1", help="Bind host"),
     port: int = typer.Option(8765, min=1, max=65535, help="Bind port"),
