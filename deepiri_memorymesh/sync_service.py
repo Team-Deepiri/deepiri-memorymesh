@@ -9,8 +9,17 @@ from .compression import compress_conversation
 from .config import Settings
 from .embeddings import Embedder
 from .models import AgentState, CompressedRecord, MemoryRecord, now_iso
+from .packaging import (
+    build_udata_payload,
+    load_udata,
+    transfer_payload_for_provider,
+    udata_to_memory_records,
+    write_udata_archive,
+    write_udata_json,
+)
 from .providers import parse_provider_file
 from .retrieval import rank_rows
+from .scanner import DeviceScanReport, ingest_device, scan_device
 from .storage import MemoryStore
 
 
@@ -22,6 +31,60 @@ class MemoryMesh:
 
     def init(self) -> None:
         self.store.init()
+
+    def scan_device(self) -> DeviceScanReport:
+        return scan_device()
+
+    def ingest_device(
+        self,
+        project: str,
+        providers: list[str] | None = None,
+    ) -> DeviceScanReport:
+        self.init()
+        return ingest_device(project=project, store=self.store, providers=providers)
+
+    def package_udata(
+        self,
+        project: str,
+        output_path: Path,
+        ingest_first: bool = True,
+        providers: list[str] | None = None,
+        compress_after: bool = False,
+    ) -> Path:
+        """Scan device, optionally ingest, export portable u-data package."""
+        self.init()
+        scan_report = None
+        if ingest_first:
+            scan_report = self.ingest_device(project=project, providers=providers)
+        else:
+            scan_report = scan_device()
+        if compress_after:
+            self.compress_project(project)
+        messages = [dict(r) for r in self.store.list_messages(project)]
+        summaries = [dict(r) for r in self.store.list_summaries(project)]
+        payload = build_udata_payload(project, messages, summaries, scan=scan_report)
+        out = output_path.expanduser()
+        if str(out).endswith((".tar.gz", ".tgz")):
+            return write_udata_archive(payload, out)
+        return write_udata_json(payload, out)
+
+    def import_udata(self, package_path: Path, project_override: str | None = None) -> int:
+        payload = load_udata(package_path)
+        records = udata_to_memory_records(payload, project_override=project_override)
+        return self.store.insert_messages(records)
+
+    def export_provider_transfer(
+        self,
+        project: str,
+        from_provider: str,
+        to_provider: str,
+        out_path: Path,
+    ) -> tuple[Path, int]:
+        messages = [dict(r) for r in self.store.list_messages(project)]
+        payload = transfer_payload_for_provider(messages, project, from_provider, to_provider)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8")
+        return out_path, len(payload.get("messages") or [])
 
     def ingest_file(self, provider: str, project: str, file_path: Path) -> int:
         records = parse_provider_file(provider, project, file_path)

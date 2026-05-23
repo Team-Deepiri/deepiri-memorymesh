@@ -6,6 +6,8 @@ from typing import Any
 
 import yaml
 
+from .device_paths import primary_paths_dict
+
 
 DEFAULT_CONFIG_DIR = Path.home() / ".config" / "deepiri-memorymesh"
 DEFAULT_CONFIG_PATH = DEFAULT_CONFIG_DIR / "config.yaml"
@@ -40,11 +42,9 @@ class Settings:
     compression_target_chars: int = 1200
     provider_paths: dict[str, str] = field(
         default_factory=lambda: {
-            "claude": "~/.claude",
+            **primary_paths_dict(),
             "gemini": "~/.config/google-gemini",
             "openai": "~/.config/openai",
-            "cursor": "~/.cursor",
-            "opencode": "~/.config/opencode",
             "copilot": "~/.config/github-copilot",
             "continue": "~/.continue",
             "aider": "~/.aider",
@@ -62,8 +62,8 @@ class Settings:
             "claude": ["**/*.json", "**/*.jsonl"],
             "gemini": ["**/*.json", "**/*.jsonl"],
             "openai": ["**/*.json", "**/*.jsonl"],
-            "cursor": ["**/*chat*.json", "**/*chat*.jsonl", "**/*conversation*.json*"],
-            "opencode": ["**/*.json", "**/*.jsonl"],
+            "cursor": ["**/*.json", "**/*.jsonl", "**/*.txt", "**/state.vscdb"],
+            "opencode": ["**/*.json", "**/*.jsonl", "**/storage/**"],
             "jsonl": ["**/*.jsonl"],
             "copilot": ["**/*.json", "**/*.jsonl"],
             "continue": ["**/*.json", "**/*.jsonl"],
