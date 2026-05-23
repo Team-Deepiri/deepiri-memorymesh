@@ -85,6 +85,31 @@ class MemoryMeshHandler(BaseHTTPRequestHandler):
                 self._send(HTTPStatus.OK, {"ok": True, "results": rows})
                 return
 
+            if self.path == "/export":
+                project = str(body.get("project") or "default")
+                fmt = str(body.get("format") or body.get("fmt") or "md")
+                provider = body.get("provider")
+                provider_str = str(provider) if provider else None
+                to_clipboard = bool(body.get("clipboard"))
+                content, written, clipboard_ok = self.mesh.export_project(
+                    project=project,
+                    fmt=fmt,
+                    provider=provider_str,
+                    output_path=None,
+                    to_clipboard=to_clipboard,
+                )
+                self._send(
+                    HTTPStatus.OK,
+                    {
+                        "ok": True,
+                        "format": fmt,
+                        "content": content,
+                        "clipboard": clipboard_ok if to_clipboard else None,
+                        "path": str(written) if written else None,
+                    },
+                )
+                return
+
             if self.path == "/state/put":
                 self.mesh.put_state(
                     project=str(body.get("project") or "default"),

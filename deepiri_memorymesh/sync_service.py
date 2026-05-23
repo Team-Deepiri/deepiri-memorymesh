@@ -18,6 +18,13 @@ from .packaging import (
     write_udata_json,
 )
 from .providers import parse_provider_file
+from .export import (
+    ExportFormat,
+    copy_to_clipboard,
+    gather_project_export,
+    normalize_format,
+    render_export,
+)
 from .retrieval import rank_rows
 from .scanner import DeviceScanReport, ingest_device, scan_device
 from .storage import MemoryStore
@@ -202,6 +209,44 @@ class MemoryMesh:
 
     def stats(self, project: str) -> dict[str, int]:
         return self.store.project_stats(project)
+
+    def export_project(
+        self,
+        project: str,
+        fmt: str = "md",
+        provider: str | None = None,
+        output_path: Path | None = None,
+        to_clipboard: bool = False,
+    ) -> tuple[str, Path | None, bool]:
+        """
+        Export all project memory (messages, summaries, agent state) as text.
+
+        Returns (content, written_path_or_none, clipboard_ok).
+        """
+        export_fmt: ExportFormat = normalize_format(fmt)
+        messages = [dict(r) for r in self.store.list_messages(project)]
+        summaries = [dict(r) for r in self.store.list_summaries(project)]
+        agent_state = [dict(r) for r in self.store.list_agent_state(project)]
+        stats = self.stats(project)
+        payload = gather_project_export(
+            project=project,
+            messages=messages,
+            summaries=summaries,
+            agent_state=agent_state,
+            stats=stats,
+            provider=provider,
+        )
+        content = render_export(payload, export_fmt)
+        written: Path | None = None
+        if output_path is not None:
+            out = output_path.expanduser()
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(content, encoding="utf-8")
+            written = out
+        clipboard_ok = False
+        if to_clipboard:
+            clipboard_ok = copy_to_clipboard(content)
+        return content, written, clipboard_ok
 
     def transfer(
         self,

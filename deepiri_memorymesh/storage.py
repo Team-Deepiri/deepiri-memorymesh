@@ -155,6 +155,19 @@ class MemoryStore:
             row = cur.fetchone()
             return None if row is None else str(row["value"])
 
+    def list_agent_state(self, project: str) -> list[sqlite3.Row]:
+        with self.connect() as conn:
+            cur = conn.execute(
+                """
+                SELECT project, agent, state_key, value, updated_at
+                FROM agent_state
+                WHERE project = ?
+                ORDER BY agent ASC, state_key ASC
+                """,
+                (project,),
+            )
+            return list(cur.fetchall())
+
     def save_embedding(self, message_id: int, embedding_json: str) -> None:
         with self.connect() as conn:
             conn.execute(
