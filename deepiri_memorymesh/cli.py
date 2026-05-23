@@ -25,8 +25,10 @@ from .providers import NATIVE_PROVIDER_PARSERS
 app = typer.Typer(help="Deepiri MemoryMesh CLI")
 state_app = typer.Typer(help="Manage shared agent state")
 bundle_app = typer.Typer(help="Export/import portable context bundles")
+package_app = typer.Typer(help="Device scan + portable u-data packaging")
 app.add_typer(state_app, name="state")
 app.add_typer(bundle_app, name="bundle")
+app.add_typer(package_app, name="package")
 
 
 def _mesh() -> MemoryMesh:
@@ -59,6 +61,106 @@ def _ensure_service_running(host: str = "127.0.0.1", port: int = 8765) -> bool:
         except Exception:
             continue
     return False
+
+
+@app.command()
+def scan(
+    ingest: bool = typer.Option(False, "--ingest", help="Ingest discovered data into memory DB"),
+    project: str | None = typer.Option(
+        None,
+        "-p",
+        "--project",
+        help="Project namespace (required with --ingest)",
+    ),
+    provider: list[str] = typer.Option(
+        [],
+        "--provider",
+        help="Limit to provider(s): claude, cursor, opencode",
+    ),
+) -> None:
+    """Scan this device for Claude Code, Cursor, and OpenCode conversation data."""
+    mesh = _mesh()
+    providers = [p.lower() for p in provider] if provider else None
+    if ingest:
+        if not project:
+            typer.echo("error: --project is required when using --ingest")
+            raise typer.Exit(1)
+        mesh.init()
+        report = mesh.ingest_device(project=project, providers=providers)
+    else:
+        report = mesh.scan_device()
+    for line in report.summary_lines():
+        typer.echo(line)
+
+
+@app.command("pull")
+def pull(
+    project: str = typer.Option(..., "-p", "--project", help="Project namespace"),
+    provider: list[str] = typer.Option(
+        [],
+        "--provider",
+        help="Limit to provider(s): claude, cursor, opencode",
+    ),
+) -> None:
+    """Scan device and ingest all Claude/Cursor/OpenCode messages (alias for scan --ingest)."""
+    mesh = _mesh()
+    mesh.init()
+    providers = [p.lower() for p in provider] if provider else None
+    report = mesh.ingest_device(project=project, providers=providers)
+    for line in report.summary_lines():
+        typer.echo(line)
+
+
+@package_app.command("build")
+def package_build(
+    project: str = typer.Option(..., "-p", "--project", help="Project namespace"),
+    out: Path = typer.Option(
+        ...,
+        "-o",
+        "--out",
+        help="Output path (.json or .tar.gz)",
+    ),
+    no_ingest: bool = typer.Option(False, help="Skip device ingest; export DB only"),
+    compress: bool = typer.Option(False, help="Compress conversations before export"),
+    provider: list[str] = typer.Option([], "--provider", help="Limit providers"),
+) -> None:
+    """One-shot: scan device, ingest, export portable u-data package."""
+    mesh = _mesh()
+    providers = [p.lower() for p in provider] if provider else None
+    path = mesh.package_udata(
+        project=project,
+        output_path=out,
+        ingest_first=not no_ingest,
+        providers=providers,
+        compress_after=compress,
+    )
+    typer.echo(f"Packaged u-data → {path}")
+
+
+@package_app.command("import")
+def package_import(
+    archive: Path = typer.Option(..., exists=True, help="udata .json or .tar.gz"),
+    project: str | None = typer.Option(None, "-p", "--project", help="Project override"),
+) -> None:
+    """Import a portable u-data package from another machine."""
+    mesh = _mesh()
+    mesh.init()
+    count = mesh.import_udata(archive, project_override=project)
+    typer.echo(f"Imported {count} message(s)")
+
+
+@package_app.command("transfer")
+def package_transfer(
+    project: str = typer.Option(..., "-p", "--project"),
+    from_provider: str = typer.Option(..., "--from"),
+    to_provider: str = typer.Option(..., "--to"),
+    out: Path = typer.Option(..., "-o", "--out"),
+) -> None:
+    """Export provider-specific transfer JSON for importing into another tool."""
+    mesh = _mesh()
+    mesh.init()
+    path, count = mesh.export_provider_transfer(project, from_provider, to_provider, out)
+    typer.echo(f"Wrote {count} message(s) → {path}")
 
 
 @app.command()

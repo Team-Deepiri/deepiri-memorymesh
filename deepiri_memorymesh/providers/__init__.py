@@ -12,7 +12,7 @@ from .opencode import parse_opencode_file
 NATIVE_PROVIDER_PARSERS: dict[str, str] = {
     "claude": "parse_claude_file",
     "anthropic": "parse_claude_file",
-    "cursor": "parse_cursor_file",
+    "cursor": "parse_cursor_file + parse_cursor_sqlite",
     "gemini": "parse_gemini_file",
     "opencode": "parse_opencode_file",
     "continue": "parse_continue_file",

@@ -16,8 +16,9 @@ This matrix tracks practical ways to sync context/memory into MemoryMesh.
 | Claude Code / Anthropic exports | user export JSON files | scaffolded | Works via flexible JSON parser |
 | Gemini | export JSON files | scaffolded | Supports role/text message arrays |
 | ChatGPT/OpenAI exports | export JSON files | scaffolded | Supports multiple conversation key names |
-| Cursor | `~/.cursor` history exports | scaffolded + auto-sync path | Bulk sync supported with `sync`/`sync-auto` |
-| OpenCode | JSON/JSONL logs | scaffolded | Uses generic parser |
+| Cursor | `~/.config/Cursor/User` SQLite (`state.vscdb`) | **native** | Device scan reads `bubbleId` + `composerData` |
+| OpenCode | `~/.local/share/opencode` | **native** | Device scan + JSON/JSONL parser |
+| Claude Code | `~/.claude/projects/*.jsonl` | **native** | Session JSONL + history index |
 | GitHub Copilot Chat | local extension cache/export files | config placeholder | Add parser once stable format is confirmed |
 | Continue.dev | `~/.continue` sessions/history | config placeholder | Good target for direct adapter |
 | Aider | `.aider` chat logs | config placeholder | Add dedicated parser for command-rich turns |
