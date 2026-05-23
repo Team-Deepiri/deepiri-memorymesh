@@ -58,3 +58,23 @@ mem.query("async work", top_k=5)
 - **Zero deps** – falls back to deterministic hashing if no model
 
 Works with any AI agent, tool, or assistant.
+
+## Device scan & portable packaging
+
+Scan Claude Code, Cursor, and OpenCode data across your machine (not just the repo):
+
+```bash
+# Discover locations
+memorymesh scan
+
+# Ingest all provider messages
+memorymesh pull -p myproject
+
+# Build portable package for another machine/provider
+memorymesh package build -p myproject -o ./udata.tar.gz
+
+# Import on another machine
+memorymesh package import ./udata.tar.gz -p myproject
+```
+
+See [docs/U_DATA_PACKAGING.md](docs/U_DATA_PACKAGING.md) and [docs/STORAGE_PATHS.md](docs/STORAGE_PATHS.md).
