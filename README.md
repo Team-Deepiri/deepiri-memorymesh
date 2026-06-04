@@ -1,6 +1,6 @@
-# Deepiri MemoryMesh 🧠
+# Deepiri MemoryMesh 
 
-**Drop-in memory layer for ANY AI agent**
+**Drop-in Memory Layer Library for your AI Agent**
 
 ```python
 from memorymesh import Memory
