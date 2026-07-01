@@ -63,16 +63,36 @@ The bridge posts into local service API and syncs messages into persistent memor
 
 ## Provider-to-provider transfer
 
-You can package one provider's memory context and send it to another:
+Package one provider's chat context and deliver it to another tool's inbox:
 
 ```bash
-memorymesh transfer --project deepiri --from claude --to opencode
-memorymesh transfer --project deepiri --from claude --to opencode --push
-memorymesh go --project deepiri --from claude --to gemini
+# Full workflow: sync source exports, compress, bundle, deliver, clipboard
+memorymesh go --project deepiri --from claude --to cursor
+
+# Manual steps
+memorymesh sync-auto --project deepiri
+memorymesh transfer --project deepiri --from claude --to cursor --push
+memorymesh transfer-render --bundle ~/.config/deepiri-memorymesh/transfers/deepiri.claude-to-cursor.json --to cursor
+memorymesh transfer-deliver --bundle ~/.config/deepiri-memorymesh/transfers/deepiri.claude-to-cursor.json --to cursor --clipboard
 ```
 
-- Without `--push`, it writes a transfer JSON bundle.
-- With `--push`, it also calls `memorymesh-bridge-<target>` if installed.
+Delivery writes paste-ready files under `~/.config/deepiri-memorymesh/inbox/<target>/`:
+
+- `context.md` — paste into the target chat
+- `import.json` — provider-shaped conversation JSON
+- `IMPORT_INSTRUCTIONS.txt` — next steps per provider
+
+Install per-target push scripts:
+
+```bash
+memorymesh install-push --target cursor
+memorymesh-push-cursor ~/.config/deepiri-memorymesh/transfers/deepiri.claude-to-cursor.json
+```
+
+HTTP API:
+
+- `POST /transfer` with `{project, from_provider, to_provider, deliver: true}`
+- `POST /transfer/deliver` with `{bundle_path, to_provider}`
 
 ## Supported integration targets
 

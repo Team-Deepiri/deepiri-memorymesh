@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections import defaultdict
 import json
 from pathlib import Path
-import subprocess
 
 from .compression import compress_conversation
 from .config import Settings
@@ -28,6 +27,7 @@ from .export import (
 from .retrieval import rank_rows
 from .scanner import DeviceScanReport, ingest_device, scan_device
 from .storage import MemoryStore
+from .transfer_delivery import DeliveryResult, deliver_transfer_bundle
 
 
 class MemoryMesh:
@@ -255,10 +255,21 @@ class MemoryMesh:
         to_provider: str,
         out_path: Path | None = None,
         push_via_bridge: bool = False,
-    ) -> tuple[Path, int]:
+        include_summaries: bool = True,
+    ) -> tuple[Path, int, DeliveryResult | None]:
         source = from_provider.strip().lower()
         target = to_provider.strip().lower()
         rows = [dict(r) for r in self.store.list_messages_by_provider(project, source)]
+        summaries: list[dict[str, str]] = []
+        if include_summaries:
+            for row in self.store.list_summaries(project):
+                summaries.append(
+                    {
+                        "conversation_id": str(row["conversation_id"]),
+                        "summary": str(row["summary"]),
+                        "method": str(row["method"]),
+                    }
+                )
         payload = {
             "project": project,
             "from_provider": source,
@@ -277,16 +288,58 @@ class MemoryMesh:
                 }
                 for row in rows
             ],
+            "summaries": summaries,
         }
         if out_path is None:
             out_dir = Path.home() / ".config" / "deepiri-memorymesh" / "transfers"
             out_dir.mkdir(parents=True, exist_ok=True)
             out_path = out_dir / f"{project}.{source}-to-{target}.json"
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8")
+        out_path.write_text(json.dumps(payload, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
 
+        delivery: DeliveryResult | None = None
         if push_via_bridge:
-            bridge = Path.home() / ".local" / "bin" / f"memorymesh-bridge-{target}"
-            if bridge.exists():
-                subprocess.run([str(bridge), str(out_path)], check=False)
-        return out_path, len(rows)
+            delivery = self.deliver_transfer(out_path, target)
+        return out_path, len(rows), delivery
+
+    def deliver_transfer(self, bundle_path: Path, target: str) -> DeliveryResult:
+        return deliver_transfer_bundle(bundle_path=bundle_path, target=target, mesh=self)
+
+    def go_transfer(
+        self,
+        project: str,
+        from_provider: str,
+        to_provider: str,
+        sync_source: bool = True,
+        compress_first: bool = True,
+        copy_clipboard: bool = True,
+    ) -> tuple[Path, DeliveryResult]:
+        source = from_provider.strip().lower()
+        if sync_source:
+            raw = self.settings.provider_paths.get(source, "")
+            if raw:
+                source_dir = Path(raw).expanduser()
+                if source_dir.exists() and source_dir.is_dir():
+                    globs = self.settings.provider_globs.get(source, ["**/*.json", "**/*.jsonl"])
+                    self.sync_directory(
+                        provider=source,
+                        project=project,
+                        directory=source_dir,
+                        recursive=True,
+                        include_globs=globs,
+                    )
+        if compress_first:
+            self.compress_project(project)
+        bundle_path, _, _ = self.transfer(
+            project=project,
+            from_provider=source,
+            to_provider=to_provider,
+            out_path=None,
+            push_via_bridge=False,
+        )
+        delivery = self.deliver_transfer(bundle_path, to_provider.strip().lower())
+        if copy_clipboard:
+            from .transfer_delivery import try_clipboard_copy
+
+            try_clipboard_copy(delivery.context_md.read_text(encoding="utf-8"))
+        return bundle_path, delivery

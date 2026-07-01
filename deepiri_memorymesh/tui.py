@@ -167,7 +167,7 @@ def run_tui(default_project: str = "deepiri") -> None:
                 stdscr.addstr(len(HELP) + 1, 0, status[:2000])
                 stdscr.addstr(len(HELP) + 2, 0, detail[:2000])
                 stdscr.refresh()
-                path, count = mesh.transfer(
+                path, count, delivery = mesh.transfer(
                     project=project,
                     from_provider=from_p,
                     to_provider=to_p,
@@ -175,7 +175,9 @@ def run_tui(default_project: str = "deepiri") -> None:
                     push_via_bridge=True,
                 )
                 status = f"Synced {count} message(s) {from_p}->{to_p}"
-                detail = f"{_provider_steps(to_p)} | Bundle: {path}"
+                inbox = delivery.inbox_dir if delivery else path.parent
+                paste = delivery.context_md if delivery else path
+                detail = f"{_provider_steps(to_p)} | Paste: {paste} | Inbox: {inbox}"
             elif ch == ord("2"):
                 status = "Running sync-auto... (this can take time)"
                 detail = "Scanning provider directories..."

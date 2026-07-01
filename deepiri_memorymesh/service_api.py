@@ -129,6 +129,63 @@ class MemoryMeshHandler(BaseHTTPRequestHandler):
                 self._send(HTTPStatus.OK, {"ok": True, "value": value})
                 return
 
+            if self.path == "/transfer":
+                from pathlib import Path
+
+                project = str(body.get("project") or "default")
+                from_provider = str(body.get("from_provider") or body.get("from") or "")
+                to_provider = str(body.get("to_provider") or body.get("to") or "")
+                deliver = bool(body.get("deliver", True))
+                if not from_provider or not to_provider:
+                    self._send(
+                        HTTPStatus.BAD_REQUEST,
+                        {"ok": False, "error": "from_provider and to_provider required"},
+                    )
+                    return
+                path, count, delivery = self.mesh.transfer(
+                    project=project,
+                    from_provider=from_provider,
+                    to_provider=to_provider,
+                    push_via_bridge=False,
+                )
+                payload: dict[str, Any] = {
+                    "ok": True,
+                    "bundle_path": str(path),
+                    "message_count": count,
+                }
+                if deliver:
+                    delivery = delivery or self.mesh.deliver_transfer(path, to_provider)
+                    payload["inbox_dir"] = str(delivery.inbox_dir)
+                    payload["context_md"] = str(delivery.context_md)
+                    payload["ingested"] = delivery.ingested
+                self._send(HTTPStatus.OK, payload)
+                return
+
+            if self.path == "/transfer/deliver":
+                from pathlib import Path
+
+                bundle_path = body.get("bundle_path")
+                to_provider = str(body.get("to_provider") or body.get("to") or "")
+                if not bundle_path or not to_provider:
+                    self._send(
+                        HTTPStatus.BAD_REQUEST,
+                        {"ok": False, "error": "bundle_path and to_provider required"},
+                    )
+                    return
+                delivery = self.mesh.deliver_transfer(Path(str(bundle_path)), to_provider)
+                self._send(
+                    HTTPStatus.OK,
+                    {
+                        "ok": True,
+                        "inbox_dir": str(delivery.inbox_dir),
+                        "context_md": str(delivery.context_md),
+                        "import_json": str(delivery.import_json),
+                        "ingested": delivery.ingested,
+                        "message_count": delivery.message_count,
+                    },
+                )
+                return
+
             self._send(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"})
         except Exception as exc:
             self._send(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
