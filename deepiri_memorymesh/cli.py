@@ -13,6 +13,7 @@ from .config import Settings
 from .integrations import (
     install_native_integration,
     install_bridge_script,
+    install_push_script,
     list_targets,
     write_hook_snippets,
     write_integration_template,
@@ -21,6 +22,8 @@ from .service_api import run_service
 from .sync_service import MemoryMesh
 from .tui import run_tui
 from .providers import NATIVE_PROVIDER_PARSERS
+from .transfer_formats import load_transfer_bundle, render_markdown, render_provider_json
+from .transfer_delivery import deliver_transfer_bundle, try_clipboard_copy
 
 app = typer.Typer(help="Deepiri MemoryMesh CLI")
 state_app = typer.Typer(help="Manage shared agent state")
@@ -462,12 +465,12 @@ def transfer(
     out: Path | None = typer.Option(None, help="Output transfer file path"),
     push: bool = typer.Option(
         False,
-        help="Push transfer file to target provider bridge if installed",
+        help="Deliver transfer to target inbox and ingest under target provider",
     ),
 ) -> None:
     """Transfer context from one provider memory layer to another."""
     mesh = _mesh()
-    path, count = mesh.transfer(
+    path, count, delivery = mesh.transfer(
         project=project,
         from_provider=from_provider,
         to_provider=to_provider,
@@ -475,6 +478,62 @@ def transfer(
         push_via_bridge=push,
     )
     typer.echo(f"Transferred {count} message(s) into {path}")
+    if delivery:
+        typer.echo(f"Delivered inbox: {delivery.inbox_dir}")
+        typer.echo(f"Paste file: {delivery.context_md}")
+        typer.echo(f"Ingested {delivery.ingested} message(s) under provider={to_provider}")
+
+
+@app.command("transfer-render")
+def transfer_render(
+    bundle: Path = typer.Option(..., exists=True, dir_okay=False, help="Transfer bundle JSON"),
+    to_provider: str = typer.Option(..., "--to", help="Target provider format"),
+    out: Path | None = typer.Option(None, help="Write markdown output path"),
+    json_out: Path | None = typer.Option(None, help="Write provider JSON output path"),
+) -> None:
+    """Render a transfer bundle as paste-ready markdown and/or provider JSON."""
+    payload = load_transfer_bundle(bundle)
+    md = render_markdown(payload)
+    provider_json = render_provider_json(payload, to_provider)
+    if out:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(md, encoding="utf-8")
+        typer.echo(f"Wrote markdown: {out}")
+    else:
+        typer.echo(md)
+    if json_out:
+        import json
+
+        json_out.parent.mkdir(parents=True, exist_ok=True)
+        json_out.write_text(json.dumps(provider_json, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
+        typer.echo(f"Wrote provider JSON: {json_out}")
+
+
+@app.command("transfer-deliver")
+def transfer_deliver(
+    bundle: Path = typer.Option(..., exists=True, dir_okay=False, help="Transfer bundle JSON"),
+    to_provider: str = typer.Option(..., "--to", help="Target provider"),
+    clipboard: bool = typer.Option(False, help="Copy context.md to clipboard if available"),
+) -> None:
+    """Deliver transfer bundle to target inbox and ingest into MemoryMesh."""
+    mesh = _mesh()
+    delivery = deliver_transfer_bundle(bundle_path=bundle, target=to_provider, mesh=mesh)
+    typer.echo(f"Delivered {delivery.message_count} message(s) to {delivery.inbox_dir}")
+    typer.echo(f"context: {delivery.context_md}")
+    typer.echo(f"import: {delivery.import_json}")
+    typer.echo(f"ingested: {delivery.ingested}")
+    if clipboard:
+        copied = try_clipboard_copy(delivery.context_md.read_text(encoding="utf-8"))
+        typer.echo("clipboard: copied" if copied else "clipboard: unavailable")
+
+
+@app.command("install-push")
+def install_push(
+    target: str = typer.Option(..., help="Target provider for push script"),
+) -> None:
+    """Install memorymesh-push-<target> script for transfer delivery."""
+    script_path = install_push_script(target=target)
+    typer.echo(f"Installed push script: {script_path}")
 
 
 @app.command()
@@ -482,18 +541,24 @@ def go(
     project: str = typer.Option(..., help="Project namespace"),
     from_provider: str = typer.Option(..., "--from", help="Source provider"),
     to_provider: str = typer.Option(..., "--to", help="Target provider"),
+    no_sync: bool = typer.Option(False, help="Skip syncing source provider directory first"),
+    no_compress: bool = typer.Option(False, help="Skip compress step before transfer"),
+    no_clipboard: bool = typer.Option(False, help="Skip copying context to clipboard"),
 ) -> None:
-    """One-shot transfer workflow from source to target provider."""
+    """Full transfer workflow: sync source, compress, bundle, deliver to target inbox."""
     mesh = _mesh()
-    path, count = mesh.transfer(
+    bundle_path, delivery = mesh.go_transfer(
         project=project,
         from_provider=from_provider,
         to_provider=to_provider,
-        out_path=None,
-        push_via_bridge=True,
+        sync_source=not no_sync,
+        compress_first=not no_compress,
+        copy_clipboard=not no_clipboard,
     )
-    typer.echo(f"Transferred {count} message(s) into {path}")
-    typer.echo(f"Next: open {to_provider} and import/use the transfer context if needed.")
+    typer.echo(f"Bundle: {bundle_path}")
+    typer.echo(f"Delivered {delivery.message_count} message(s) to {delivery.inbox_dir}")
+    typer.echo(f"Paste into {to_provider}: {delivery.context_md}")
+    typer.echo(delivery.instructions_path.read_text(encoding="utf-8"))
 
 
 @app.command()

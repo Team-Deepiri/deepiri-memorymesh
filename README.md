@@ -90,3 +90,16 @@ memorymesh export -p myproject --format json --provider cursor
 ```
 
 The TUI (`memorymesh tui`) adds **[7] Export**. The HTTP API accepts `POST /export` with `{"project":"...", "format":"md", "clipboard": true}`.
+
+## Cross-provider chat transfer
+
+Move a full conversation from one tool to another:
+
+```bash
+memorymesh init
+memorymesh go --project myrepo --from cursor --to claude
+```
+
+That syncs source exports, builds a transfer bundle, writes paste-ready `context.md` to the target inbox, and ingests the chat under the target provider in MemoryMesh.
+
+See [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) for `transfer`, `transfer-deliver`, and `install-push`.

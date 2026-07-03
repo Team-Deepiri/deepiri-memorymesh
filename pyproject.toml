@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "memorymesh"
-version = "0.1.0"
+version = "0.2.0"
 description = "Drop-in memory layer for ANY AI agent"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -16,6 +16,9 @@ dependencies = [
 [project.optional-dependencies]
 embeddings = [
    "sentence-transformers>=3.0.1",
+]
+dev = [
+    "pytest>=8.0",
 ]
 
 [project.scripts]
