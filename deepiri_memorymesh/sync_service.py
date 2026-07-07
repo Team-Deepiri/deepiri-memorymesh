@@ -256,13 +256,24 @@ class MemoryMesh:
         out_path: Path | None = None,
         push_via_bridge: bool = False,
         include_summaries: bool = True,
+        conversation_id: str | None = None,
     ) -> tuple[Path, int, DeliveryResult | None]:
         source = from_provider.strip().lower()
         target = to_provider.strip().lower()
-        rows = [dict(r) for r in self.store.list_messages_by_provider(project, source)]
+        if conversation_id:
+            rows = [
+                dict(r)
+                for r in self.store.list_messages_filtered(
+                    project, provider=source, conversation_id=conversation_id
+                )
+            ]
+        else:
+            rows = [dict(r) for r in self.store.list_messages_by_provider(project, source)]
         summaries: list[dict[str, str]] = []
         if include_summaries:
             for row in self.store.list_summaries(project):
+                if conversation_id and conversation_id not in str(row["conversation_id"]):
+                    continue
                 summaries.append(
                     {
                         "conversation_id": str(row["conversation_id"]),
@@ -270,11 +281,12 @@ class MemoryMesh:
                         "method": str(row["method"]),
                     }
                 )
+        conv_label = conversation_id or f"transfer-{source}-to-{target}"
         payload = {
             "project": project,
             "from_provider": source,
             "to_provider": target,
-            "conversation_id": f"transfer-{source}-to-{target}",
+            "conversation_id": conv_label,
             "messages": [
                 {
                     "role": row["role"],
@@ -293,7 +305,11 @@ class MemoryMesh:
         if out_path is None:
             out_dir = Path.home() / ".config" / "deepiri-memorymesh" / "transfers"
             out_dir.mkdir(parents=True, exist_ok=True)
-            out_path = out_dir / f"{project}.{source}-to-{target}.json"
+            suffix = ""
+            if conversation_id:
+                safe = conversation_id.replace("/", "-")[:40]
+                suffix = f".{safe}"
+            out_path = out_dir / f"{project}.{source}-to-{target}{suffix}.json"
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(json.dumps(payload, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
 
@@ -313,6 +329,7 @@ class MemoryMesh:
         sync_source: bool = True,
         compress_first: bool = True,
         copy_clipboard: bool = True,
+        conversation_id: str | None = None,
     ) -> tuple[Path, DeliveryResult]:
         source = from_provider.strip().lower()
         if sync_source:
@@ -328,7 +345,7 @@ class MemoryMesh:
                         recursive=True,
                         include_globs=globs,
                     )
-        if compress_first:
+        if compress_first and not conversation_id:
             self.compress_project(project)
         bundle_path, _, _ = self.transfer(
             project=project,
@@ -336,6 +353,7 @@ class MemoryMesh:
             to_provider=to_provider,
             out_path=None,
             push_via_bridge=False,
+            conversation_id=conversation_id,
         )
         delivery = self.deliver_transfer(bundle_path, to_provider.strip().lower())
         if copy_clipboard:
@@ -343,3 +361,61 @@ class MemoryMesh:
 
             try_clipboard_copy(delivery.context_md.read_text(encoding="utf-8"))
         return bundle_path, delivery
+
+    def resume_session(
+        self,
+        *,
+        project: str,
+        from_provider: str,
+        to_provider: str,
+        workspace: Path,
+        conversation_id: str | None = None,
+        sync_source: bool = True,
+    ) -> tuple[Path, DeliveryResult, dict]:
+        """Workspace Session Bridge: auto-resolve session, transfer, deliver, write handoffs."""
+        from .handoff import write_handoff_files
+        from .session_bridge import pick_best_session
+
+        self.init()
+        source = from_provider.strip().lower()
+        target = to_provider.strip().lower()
+        ws = workspace.expanduser().resolve()
+
+        if sync_source:
+            self.ingest_device(project=project, providers=[source])
+
+        conv = conversation_id
+        if not conv:
+            match = pick_best_session(
+                workspace=ws,
+                provider=source,
+                store=self.store,
+                project=project,
+            )
+            if match is None:
+                raise ValueError(
+                    f"No session found for workspace={ws} provider={source}. "
+                    "Pass --conversation explicitly or run from the project directory."
+                )
+            conv = match.conversation_id
+
+        bundle_path, count, delivery = self.transfer(
+            project=project,
+            from_provider=source,
+            to_provider=target,
+            push_via_bridge=True,
+            conversation_id=conv,
+            include_summaries=True,
+        )
+        if count == 0:
+            raise ValueError(f"No messages matched conversation={conv!r}")
+
+        handoff_meta = write_handoff_files(
+            bundle_path,
+            ws,
+            provider=target,
+            use_resume_brief=True,
+        )
+        handoff_meta["resolved_conversation_id"] = conv
+        handoff_meta["message_count"] = count
+        return bundle_path, delivery, handoff_meta

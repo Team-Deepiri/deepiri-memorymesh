@@ -119,6 +119,75 @@ class MemoryStore:
             )
             return list(cur.fetchall())
 
+    def list_messages_filtered(
+        self,
+        project: str,
+        provider: str | None = None,
+        conversation_id: str | None = None,
+    ) -> list[sqlite3.Row]:
+        """List messages, optionally filtered by provider and/or conversation id substring."""
+        clauses = ["project = ?"]
+        params: list[str] = [project]
+        if provider:
+            clauses.append("provider = ?")
+            params.append(provider)
+        if conversation_id:
+            clauses.append("conversation_id LIKE ?")
+            params.append(f"%{conversation_id}%")
+        where = " AND ".join(clauses)
+        with self.connect() as conn:
+            cur = conn.execute(
+                f"""
+                SELECT id, provider, project, conversation_id, role, content, timestamp, metadata_json
+                FROM memory_messages
+                WHERE {where}
+                ORDER BY timestamp ASC, id ASC
+                """,
+                params,
+            )
+            return list(cur.fetchall())
+
+    def list_conversations(
+        self,
+        project: str,
+        provider: str | None = None,
+        limit: int = 30,
+    ) -> list[sqlite3.Row]:
+        """Summarize conversations for a project (message count, last timestamp, preview)."""
+        clauses = ["project = ?"]
+        params: list[str | int] = [project]
+        if provider:
+            clauses.append("provider = ?")
+            params.append(provider)
+        where = " AND ".join(clauses)
+        params.append(limit)
+        with self.connect() as conn:
+            cur = conn.execute(
+                f"""
+                SELECT
+                    conversation_id,
+                    provider,
+                    COUNT(*) AS message_count,
+                    MAX(timestamp) AS last_timestamp,
+                    (
+                        SELECT content FROM memory_messages m2
+                        WHERE m2.project = memory_messages.project
+                          AND m2.conversation_id = memory_messages.conversation_id
+                          AND m2.provider = memory_messages.provider
+                          AND m2.role = 'user'
+                        ORDER BY m2.timestamp DESC, m2.id DESC
+                        LIMIT 1
+                    ) AS last_user_preview
+                FROM memory_messages
+                WHERE {where}
+                GROUP BY provider, conversation_id
+                ORDER BY last_timestamp DESC
+                LIMIT ?
+                """,
+                params,
+            )
+            return list(cur.fetchall())
+
     def upsert_summary(self, rec: CompressedRecord) -> None:
         with self.connect() as conn:
             conn.execute(

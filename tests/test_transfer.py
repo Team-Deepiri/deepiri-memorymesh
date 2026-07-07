@@ -72,6 +72,10 @@ def test_transfer_bundle_and_delivery(mesh: MemoryMesh, tmp_path: Path) -> None:
     assert "MemoryMesh transfer context" in md
     assert "building MemoryMesh transfer" in md
 
+    if delivery is not None:
+        inbox_md = delivery.context_md.read_text(encoding="utf-8")
+        assert "session resume" in inbox_md.lower()
+
     cursor_json = render_provider_json(payload, "cursor")
     assert cursor_json["conversationId"].startswith("transfer-")
     assert len(cursor_json["messages"]) == 2
@@ -93,7 +97,7 @@ def test_go_transfer_writes_inbox(mesh: MemoryMesh, tmp_path: Path, monkeypatch:
     )
     assert bundle_path.exists()
     assert delivery.inbox_dir == inbox_root / "gemini"
-    assert "Paste this block" in delivery.context_md.read_text(encoding="utf-8")
+    assert "session resume" in delivery.context_md.read_text(encoding="utf-8").lower()
 
 
 def test_deliver_ingests_under_target_provider(mesh: MemoryMesh, tmp_path: Path) -> None:
@@ -119,3 +123,46 @@ def test_deliver_ingests_under_target_provider(mesh: MemoryMesh, tmp_path: Path)
     assert delivery.ingested == 2
     rows = mesh.store.list_messages_by_provider("demo", "cursor")
     assert len(rows) == 2
+
+
+def test_transfer_filters_by_conversation(mesh: MemoryMesh, tmp_path: Path) -> None:
+    mesh.store.insert_messages(
+        [
+            MemoryRecord(
+                provider="claude",
+                project="demo",
+                conversation_id="other-session",
+                role="user",
+                content="unrelated work",
+                timestamp="2026-01-02T00:00:00+00:00",
+            ),
+        ]
+    )
+    bundle_path, count, _ = mesh.transfer(
+        project="demo",
+        from_provider="claude",
+        to_provider="cursor",
+        conversation_id="c1",
+    )
+    assert count == 2
+    payload = load_transfer_bundle(bundle_path)
+    assert payload["conversation_id"] == "c1"
+    assert len(messages_from_bundle(payload)) == 2
+
+
+def test_write_handoff_files(mesh: MemoryMesh, tmp_path: Path) -> None:
+    from deepiri_memorymesh.handoff import write_handoff_files
+
+    bundle_path, _, _ = mesh.transfer(
+        project="demo",
+        from_provider="claude",
+        to_provider="cursor",
+        conversation_id="c1",
+    )
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    meta = write_handoff_files(bundle_path, ws, provider="cursor")
+    assert meta["handoff_files"]
+    text = Path(meta["handoff_files"][0]).read_text(encoding="utf-8")
+    assert "building MemoryMesh transfer" in text
+    assert "session resume" in text.lower()
