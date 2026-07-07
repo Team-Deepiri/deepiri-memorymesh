@@ -29,9 +29,11 @@ app = typer.Typer(help="Deepiri MemoryMesh CLI")
 state_app = typer.Typer(help="Manage shared agent state")
 bundle_app = typer.Typer(help="Export/import portable context bundles")
 package_app = typer.Typer(help="Device scan + portable u-data packaging")
+conv_app = typer.Typer(help="List and inspect stored conversations")
 app.add_typer(state_app, name="state")
 app.add_typer(bundle_app, name="bundle")
 app.add_typer(package_app, name="package")
+app.add_typer(conv_app, name="conversations")
 
 
 def _mesh() -> MemoryMesh:
@@ -462,6 +464,12 @@ def transfer(
     project: str = typer.Option(..., help="Project namespace"),
     from_provider: str = typer.Option(..., "--from", help="Source provider"),
     to_provider: str = typer.Option(..., "--to", help="Target provider"),
+    conversation: str | None = typer.Option(
+        None,
+        "-c",
+        "--conversation",
+        help="Limit transfer to one conversation id (substring match)",
+    ),
     out: Path | None = typer.Option(None, help="Output transfer file path"),
     push: bool = typer.Option(
         False,
@@ -476,6 +484,7 @@ def transfer(
         to_provider=to_provider,
         out_path=out,
         push_via_bridge=push,
+        conversation_id=conversation,
     )
     typer.echo(f"Transferred {count} message(s) into {path}")
     if delivery:
@@ -541,6 +550,12 @@ def go(
     project: str = typer.Option(..., help="Project namespace"),
     from_provider: str = typer.Option(..., "--from", help="Source provider"),
     to_provider: str = typer.Option(..., "--to", help="Target provider"),
+    conversation: str | None = typer.Option(
+        None,
+        "-c",
+        "--conversation",
+        help="Limit transfer to one conversation id (substring match)",
+    ),
     no_sync: bool = typer.Option(False, help="Skip syncing source provider directory first"),
     no_compress: bool = typer.Option(False, help="Skip compress step before transfer"),
     no_clipboard: bool = typer.Option(False, help="Skip copying context to clipboard"),
@@ -554,11 +569,119 @@ def go(
         sync_source=not no_sync,
         compress_first=not no_compress,
         copy_clipboard=not no_clipboard,
+        conversation_id=conversation,
     )
     typer.echo(f"Bundle: {bundle_path}")
     typer.echo(f"Delivered {delivery.message_count} message(s) to {delivery.inbox_dir}")
     typer.echo(f"Paste into {to_provider}: {delivery.context_md}")
     typer.echo(delivery.instructions_path.read_text(encoding="utf-8"))
+
+
+@conv_app.command("list")
+def conversations_list(
+    project: str = typer.Option(..., "-p", "--project", help="Project namespace"),
+    provider: str | None = typer.Option(None, "--provider", help="Filter by provider"),
+    limit: int = typer.Option(20, min=1, max=100),
+) -> None:
+    """List stored conversations (newest first) with message counts and previews."""
+    mesh = _mesh()
+    rows = mesh.store.list_conversations(project=project, provider=provider, limit=limit)
+    if not rows:
+        typer.echo(f"No conversations for project={project}")
+        raise typer.Exit(0)
+    for row in rows:
+        preview = str(row["last_user_preview"] or "").replace("\n", " ")[:120]
+        typer.echo(
+            f"{row['conversation_id']}\t"
+            f"provider={row['provider']}\t"
+            f"msgs={row['message_count']}\t"
+            f"last={row['last_timestamp']}"
+        )
+        if preview:
+            typer.echo(f"  preview: {preview}")
+
+
+@app.command()
+def resume(
+    project: str = typer.Option(..., "-p", "--project", help="Project namespace"),
+    from_provider: str = typer.Option(..., "--from", help="Source provider"),
+    to_provider: str = typer.Option(..., "--to", help="Target provider"),
+    workspace: Path | None = typer.Option(
+        None,
+        "-w",
+        "--workspace",
+        help="Workspace to correlate sessions (default: cwd)",
+    ),
+    conversation: str | None = typer.Option(
+        None,
+        "-c",
+        "--conversation",
+        help="Optional conversation id; auto-detected from workspace when omitted",
+    ),
+    no_sync: bool = typer.Option(False, help="Skip syncing source provider first"),
+    clipboard: bool = typer.Option(True, help="Copy resume brief to clipboard"),
+) -> None:
+    """Workspace Session Bridge — auto-pick source session and resume in target agent."""
+    mesh = _mesh()
+    ws = (workspace or Path.cwd()).expanduser().resolve()
+    try:
+        bundle_path, delivery, meta = mesh.resume_session(
+            project=project,
+            from_provider=from_provider,
+            to_provider=to_provider,
+            workspace=ws,
+            conversation_id=conversation,
+            sync_source=not no_sync,
+        )
+    except ValueError as exc:
+        typer.echo(f"error: {exc}")
+        raise typer.Exit(1) from exc
+
+    typer.echo(f"Resolved session: {meta.get('resolved_conversation_id')}")
+    typer.echo(f"Transferred {meta.get('message_count')} message(s)")
+    typer.echo(f"Bundle: {bundle_path}")
+    typer.echo(f"Inbox: {delivery.context_md}")
+    for path in meta.get("handoff_files") or []:
+        typer.echo(f"Handoff: {path}")
+    if clipboard:
+        copied = try_clipboard_copy(delivery.context_md.read_text(encoding="utf-8"))
+        typer.echo("clipboard: copied" if copied else "clipboard: unavailable")
+    typer.echo(
+        f"\nTarget agent ({to_provider}) can read the handoff file(s) above "
+        f"or inbox context.md to continue the session."
+    )
+
+
+@app.command()
+def handoff(
+    project: str = typer.Option(..., "-p", "--project", help="Project namespace"),
+    from_provider: str = typer.Option(..., "--from", help="Source provider"),
+    to_provider: str = typer.Option(..., "--to", help="Target provider"),
+    conversation: str | None = typer.Option(
+        None,
+        "-c",
+        "--conversation",
+        help="Conversation id (substring). Auto-detected when omitted.",
+    ),
+    workspace: Path | None = typer.Option(
+        None,
+        "-w",
+        "--workspace",
+        help="Workspace directory for provider handoff files (default: cwd)",
+    ),
+    no_sync: bool = typer.Option(False, help="Skip syncing source provider first"),
+    clipboard: bool = typer.Option(True, help="Copy handoff markdown to clipboard"),
+) -> None:
+    """Alias for resume — transfer one session with workspace-aware handoff files."""
+    resume(
+        project=project,
+        from_provider=from_provider,
+        to_provider=to_provider,
+        workspace=workspace,
+        conversation=conversation,
+        no_sync=no_sync,
+        clipboard=clipboard,
+    )
 
 
 @app.command()

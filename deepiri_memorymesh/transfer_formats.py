@@ -153,39 +153,6 @@ def render_provider_json(bundle: dict[str, Any], target: str) -> dict[str, Any]:
 
 
 def import_instructions(target: str, inbox_dir: Path) -> str:
-    key = target.strip().lower()
-    md = inbox_dir / "context.md"
-    js = inbox_dir / "import.json"
-    common = (
-        f"MemoryMesh delivered transfer files to:\n"
-        f"  - {md}\n"
-        f"  - {js}\n\n"
-    )
-    if key == "cursor":
-        return (
-            common
-            + "Cursor: open a new chat and paste the contents of context.md as your first message.\n"
-            + "Optional: keep Cursor hooks installed so future sessions sync back into MemoryMesh.\n"
-        )
-    if key == "claude":
-        return (
-            common
-            + "Claude Code: paste context.md into a new session, or import import.json via your export workflow.\n"
-            + "Run `memorymesh install-native --target claude` if hooks are not installed.\n"
-        )
-    if key == "gemini":
-        return (
-            common
-            + "Gemini: paste context.md into a new chat to continue with transferred context.\n"
-        )
-    if key == "continue":
-        return (
-            common
-            + "Continue: paste context.md into the session input or add import.json to your session context.\n"
-        )
-    if key == "opencode":
-        return (
-            common
-            + "OpenCode: paste context.md at session start; bridge plugin can ingest future exports.\n"
-        )
-    return common + f"{target}: paste context.md into a new chat to continue.\n"
+    from .provider_registry import import_instructions as _dynamic
+
+    return _dynamic(target, inbox_dir)

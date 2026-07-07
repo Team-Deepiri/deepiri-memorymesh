@@ -63,20 +63,19 @@ The bridge posts into local service API and syncs messages into persistent memor
 
 ## Provider-to-provider transfer
 
-Package one provider's chat context and deliver it to another tool's inbox:
-
 ```bash
-# Full workflow: sync source exports, compress, bundle, deliver, clipboard
+# Full workflow (whole provider — can be large)
 memorymesh go --project deepiri --from claude --to cursor
 
-# Manual steps
-memorymesh sync-auto --project deepiri
-memorymesh transfer --project deepiri --from claude --to cursor --push
-memorymesh transfer-render --bundle ~/.config/deepiri-memorymesh/transfers/deepiri.claude-to-cursor.json --to cursor
-memorymesh transfer-deliver --bundle ~/.config/deepiri-memorymesh/transfers/deepiri.claude-to-cursor.json --to cursor --clipboard
+# Recommended: workspace session bridge (auto session + resume brief)
+memorymesh resume -p deepiri --from claude --to cursor -w /path/to/repo
+
+# Manual single-conversation transfer
+memorymesh transfer --project deepiri --from claude --to cursor -c SESSION_ID --push
+memorymesh transfer-deliver --bundle ~/.config/deepiri-memorymesh/transfers/deepiri.claude-to-cursor.json --to cursor
 ```
 
-Delivery writes paste-ready files under `~/.config/deepiri-memorymesh/inbox/<target>/`:
+Delivery writes paste-ready files under `~/.config/deepiri-memorymesh/inbox/<target>/` and provider-specific handoff files under the workspace (resolved dynamically per target — not hardcoded to Cursor or Claude).
 
 - `context.md` — paste into the target chat
 - `import.json` — provider-shaped conversation JSON
