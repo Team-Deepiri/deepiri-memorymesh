@@ -1,0 +1,122 @@
+# CI: unit tests, ResourceWarnings-as-errors, compileall, wheel build + smoke install.
+# Separate from CodeQL. No model downloads; no persistent services; no real user paths.
+
+name: Tests
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Set up Node (OpenCode runtime tests)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install pinned esbuild from lockfile
+        run: npm ci
+
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install .
+          python -m pip install build
+
+      - name: Unit tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Unit tests (ResourceWarning as error)
+        run: python -W error::ResourceWarning -m unittest discover -s tests -v
+
+      - name: Require OpenCode runtime tests (no silent skip)
+        run: |
+          python - <<'PY'
+          import unittest
+          from pathlib import Path
+          loader = unittest.defaultTestLoader
+          suite = loader.discover("tests", pattern="test_opencode_plugin_runtime.py")
+          result = unittest.TextTestRunner(verbosity=2).run(suite)
+          if not result.wasSuccessful():
+              raise SystemExit(1)
+          if result.testsRun < 1:
+              raise SystemExit("OpenCode runtime suite ran zero tests")
+          if result.skipped:
+              names = ", ".join(str(t) for t, _ in result.skipped)
+              raise SystemExit(
+                  f"OpenCode runtime tests were skipped in CI (esbuild/Node required): {names}"
+              )
+          print(f"OpenCode runtime tests OK: ran={result.testsRun}")
+          PY
+
+      - name: Compile bytecode
+        run: python -m compileall deepiri_memorymesh memorymesh
+
+      - name: Build wheel
+        run: python -m build --wheel
+
+      - name: Clean wheel install smoke test (outside checkout)
+        run: |
+          WHEEL="$(pwd)/dist/memorymesh-"*.whl
+          SMOKE_DIR="$(mktemp -d)"
+          python -m venv "${SMOKE_DIR}/venv"
+          "${SMOKE_DIR}/venv/bin/python" -m pip install --upgrade pip
+          "${SMOKE_DIR}/venv/bin/python" -m pip install ${WHEEL}
+          # Run imports from a directory that is not the repository checkout so
+          # site-packages (the wheel) wins over any local source tree.
+          cd "${SMOKE_DIR}"
+          "${SMOKE_DIR}/venv/bin/python" -c "import memorymesh, typer, yaml, deepiri_memorymesh; from memorymesh import Memory; print(memorymesh.__version__); print(deepiri_memorymesh.__file__)"
+          "${SMOKE_DIR}/venv/bin/memorymesh" --help
+          case "$(${SMOKE_DIR}/venv/bin/python -c 'import deepiri_memorymesh; print(deepiri_memorymesh.__file__)')" in
+            *"${GITHUB_WORKSPACE}"*) echo "wheel import resolved to checkout; failing"; exit 1 ;;
+          esac
+
+  security:
+    name: Security extra (Python 3.12)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install package with security extra
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install '.[security]'
+
+      - name: Encryption / auth Batch 6 tests
+        run: |
+          python -c "import cryptography; print('cryptography', cryptography.__version__)"
+          python -m unittest \
+            tests.test_batch6_crypto \
+            tests.test_batch6_storage_crypto \
+            tests.test_batch6_auth \
+            tests.test_batch6_api_pull \
+            tests.test_batch6_install \
+            -v
+
+      - name: ResourceWarning as error (security job)
+        run: python -W error::ResourceWarning -m unittest discover -s tests -v

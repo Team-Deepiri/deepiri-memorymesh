@@ -8,21 +8,19 @@ from .continue_dev import parse_continue_file
 from .cursor import parse_cursor_file
 from .gemini import parse_gemini_file
 from .opencode import parse_opencode_file
+from .registry import get_provider, native_parser_map, normalize_provider_key
 
-NATIVE_PROVIDER_PARSERS: dict[str, str] = {
-    "claude": "parse_claude_file",
-    "anthropic": "parse_claude_file",
-    "cursor": "parse_cursor_file",
-    "gemini": "parse_gemini_file",
-    "opencode": "parse_opencode_file",
-    "continue": "parse_continue_file",
-    "aider": "parse_aider_file",
-}
+NATIVE_PROVIDER_PARSERS: dict[str, str] = native_parser_map()
 
 
 def parse_provider_file(provider: str, project: str, file_path: Path) -> list[MemoryRecord]:
-    key = provider.strip().lower()
-    if key in {"claude", "anthropic"}:
+    key = normalize_provider_key(provider)
+    cap = get_provider(key)
+    if cap.parser_kind == "unsupported":
+        # Explicit ingest of unknown/unsupported names still uses the generic
+        # parser so deliberate file loads work; sync-auto never routes here.
+        return parse_generic_file(key, project, file_path)
+    if key in {"claude"}:
         return parse_claude_file(key, project, file_path)
     if key in {"cursor"}:
         return parse_cursor_file(key, project, file_path)
@@ -34,6 +32,9 @@ def parse_provider_file(provider: str, project: str, file_path: Path) -> list[Me
         return parse_continue_file(key, project, file_path)
     if key in {"aider"}:
         return parse_aider_file(key, project, file_path)
+    if cap.parser_kind == "generic-explicit":
+        return parse_generic_file(key, project, file_path)
     return parse_generic_file(key, project, file_path)
 
-__all__ = ["parse_provider_file", "NATIVE_PROVIDER_PARSERS"]
+
+__all__ = ["parse_provider_file", "NATIVE_PROVIDER_PARSERS", "get_provider", "normalize_provider_key"]

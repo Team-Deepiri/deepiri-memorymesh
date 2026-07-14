@@ -136,43 +136,37 @@ def run_tui(default_project: str = "deepiri") -> None:
                 stdscr.addstr(len(HELP) + 1, 0, status[:2000])
                 stdscr.addstr(len(HELP) + 2, 0, detail[:2000])
                 stdscr.refresh()
-                path, count = mesh.transfer(
+                path, count, push_report = mesh.transfer_with_report(
                     project=project,
                     from_provider=from_p,
                     to_provider=to_p,
                     out_path=None,
                     push_via_bridge=True,
                 )
-                status = f"Synced {count} message(s) {from_p}->{to_p}"
-                detail = f"{_provider_steps(to_p)} | Bundle: {path}"
+                if push_report.attempted and not push_report.success:
+                    status = f"Synced {count} message(s) {from_p}->{to_p} (push failed)"
+                    detail = f"{push_report.message} | Bundle: {path}"
+                else:
+                    status = f"Synced {count} message(s) {from_p}->{to_p}"
+                    detail = f"{_provider_steps(to_p)} | Bundle: {path}"
             elif ch == ord("2"):
                 status = "Running sync-auto... (this can take time)"
                 detail = "Scanning provider directories..."
                 stdscr.addstr(len(HELP) + 1, 0, status[:2000])
                 stdscr.addstr(len(HELP) + 2, 0, detail[:2000])
                 stdscr.refresh()
-                total_files = 0
-                total_messages = 0
-                for provider in settings.providers:
-                    source = settings.provider_paths.get(provider, "")
-                    if not source:
-                        continue
-                    from pathlib import Path
-
-                    p = Path(source).expanduser()
-                    if not p.exists() or not p.is_dir():
-                        continue
-                    globs = settings.provider_globs.get(provider, ["**/*.json", "**/*.jsonl"])
-                    processed, inserted = mesh.sync_directory(
-                        provider=provider,
-                        project=project,
-                        directory=p,
-                        recursive=True,
-                        include_globs=globs,
+                auto_report = mesh.sync_auto_report(project=project, recursive=True)
+                total_files = auto_report.total_processed
+                total_messages = auto_report.total_inserted
+                total_failed = auto_report.total_failed
+                skipped = auto_report.skipped_unsupported + auto_report.skipped_missing_path
+                if total_failed or skipped:
+                    status = (
+                        f"Sync done: files={total_files}, failed={total_failed}, "
+                        f"skipped={skipped}, messages={total_messages}"
                     )
-                    total_files += processed
-                    total_messages += inserted
-                status = f"Sync done: files={total_files}, messages={total_messages}"
+                else:
+                    status = f"Sync done: files={total_files}, messages={total_messages}"
                 detail = ""
             elif ch == ord("3"):
                 status = "Compressing conversations..."
