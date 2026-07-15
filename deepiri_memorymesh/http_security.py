@@ -171,7 +171,6 @@ def validate_ingest_file_path(file_path: str | Path, allowed_roots: list[Path]) 
 
     # CodeQL-friendly pattern: join a trusted base with a relative segment, then
     # startswith-check before any filesystem use of the combined path.
-    sanitized: str | None = None
     for root in allowed_roots:
         try:
             base = os.path.realpath(os.path.expanduser(str(root)))
@@ -200,21 +199,13 @@ def validate_ingest_file_path(file_path: str | Path, allowed_roots: list[Path]) 
         if rel.startswith(".." + os.sep) or rel == "..":
             continue
 
-        fullpath = os.path.normpath(os.path.join(base, rel))
+        fullpath = os.path.realpath(os.path.normpath(os.path.join(base, rel)))
         if fullpath != base and not fullpath.startswith(base_prefix):
             continue
-        fullpath = os.path.realpath(fullpath)
-        if fullpath != base and not fullpath.startswith(base_prefix):
-            continue
-        sanitized = fullpath
-        break
+        if not os.path.isfile(fullpath):
+            if not os.path.exists(fullpath):
+                raise IngestPathError(404, "path_not_found", "Ingest file not found")
+            raise IngestPathError(400, "invalid_path", "file_path must be a regular file")
+        return Path(fullpath)
 
-    if sanitized is None:
-        raise IngestPathError(403, "path_not_allowed", "file_path is outside allowed ingest roots")
-
-    if not os.path.isfile(sanitized):
-        if not os.path.exists(sanitized):
-            raise IngestPathError(404, "path_not_found", "Ingest file not found")
-        raise IngestPathError(400, "invalid_path", "file_path must be a regular file")
-
-    return Path(sanitized)
+    raise IngestPathError(403, "path_not_allowed", "file_path is outside allowed ingest roots")
