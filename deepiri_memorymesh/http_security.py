@@ -171,14 +171,11 @@ def validate_ingest_file_path(file_path: str | Path, allowed_roots: list[Path]) 
     except OSError as exc:
         raise IngestPathError(400, "invalid_path", "Invalid file_path") from exc
 
-    if not os.path.isfile(resolved):
-        if not os.path.exists(resolved):
-            raise IngestPathError(404, "path_not_found", "Ingest file not found")
-        raise IngestPathError(400, "invalid_path", "file_path must be a regular file")
-
     if not allowed_roots:
         raise IngestPathError(403, "path_not_allowed", "No ingest roots configured")
 
+    # Containment check first so path I/O only runs on allowlisted paths.
+    sanitized: str | None = None
     for root in allowed_roots:
         try:
             root_real = os.path.realpath(str(root))
@@ -187,6 +184,15 @@ def validate_ingest_file_path(file_path: str | Path, allowed_roots: list[Path]) 
         # Trailing sep so /allowed is not a prefix of /allowed-elsewhere.
         root_prefix = root_real if root_real.endswith(os.sep) else root_real + os.sep
         if resolved == root_real or resolved.startswith(root_prefix):
-            return Path(resolved)
+            sanitized = resolved
+            break
 
-    raise IngestPathError(403, "path_not_allowed", "file_path is outside allowed ingest roots")
+    if sanitized is None:
+        raise IngestPathError(403, "path_not_allowed", "file_path is outside allowed ingest roots")
+
+    if not os.path.isfile(sanitized):
+        if not os.path.exists(sanitized):
+            raise IngestPathError(404, "path_not_found", "Ingest file not found")
+        raise IngestPathError(400, "invalid_path", "file_path must be a regular file")
+
+    return Path(sanitized)
