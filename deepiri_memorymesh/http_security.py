@@ -158,7 +158,9 @@ def validate_ingest_file_path(file_path: str | Path, allowed_roots: list[Path]) 
         raise IngestPathError(400, "invalid_path", "file_path is required")
 
     try:
-        candidate = Path(str(file_path)).expanduser()
+        # User input is expanded/resolved, then constrained to allowed_roots via
+        # relative_to below before any ingest I/O — reject paths outside those roots.
+        candidate = Path(str(file_path)).expanduser()  # codeql[py/path-injection]
     except (TypeError, ValueError) as exc:
         raise IngestPathError(400, "invalid_path", "Invalid file_path") from exc
 

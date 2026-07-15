@@ -37,6 +37,8 @@ class FacadeConcurrencyTests(unittest.TestCase):
         self._tmpdir.cleanup()
 
     def test_concurrent_store_dedupes_across_instances(self) -> None:
+        # Initialize schema once so concurrent workers don't race migrations.
+        Memory(db_path=self.db, embedder="fallback")
         barrier = threading.Barrier(8)
         errors: list[BaseException] = []
 

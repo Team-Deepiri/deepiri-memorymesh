@@ -650,6 +650,7 @@ class DnsConnectionPinningTests(unittest.TestCase):
 
         class FakeContext:
             verify_mode = ssl.CERT_REQUIRED
+            check_hostname = True
             post_handshake_auth = None
 
             def set_alpn_protocols(self, protocols):  # noqa: ANN001
@@ -710,6 +711,7 @@ class DnsConnectionPinningTests(unittest.TestCase):
 
         class FakeContext:
             verify_mode = ssl.CERT_REQUIRED
+            check_hostname = True
             post_handshake_auth = None
 
             def set_alpn_protocols(self, protocols):  # noqa: ANN001
