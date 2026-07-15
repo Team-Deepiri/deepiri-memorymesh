@@ -159,33 +159,62 @@ def validate_ingest_file_path(file_path: str | Path, allowed_roots: list[Path]) 
         raise IngestPathError(400, "invalid_path", "file_path is required")
 
     try:
-        candidate = Path(str(file_path).strip()).expanduser().resolve(strict=False)
-    except (TypeError, ValueError, OSError) as exc:
+        raw = os.path.expanduser(str(file_path).strip())
+    except (TypeError, ValueError) as exc:
         raise IngestPathError(400, "invalid_path", "Invalid file_path") from exc
+
+    if not raw:
+        raise IngestPathError(400, "invalid_path", "Invalid file_path")
 
     if not allowed_roots:
         raise IngestPathError(403, "path_not_allowed", "No ingest roots configured")
 
-    # Containment check first so path I/O only runs on allowlisted paths.
-    sanitized: Path | None = None
+    # CodeQL-friendly pattern: join a trusted base with a relative segment, then
+    # startswith-check before any filesystem use of the combined path.
+    sanitized: str | None = None
     for root in allowed_roots:
         try:
-            root_resolved = Path(root).expanduser().resolve(strict=False)
+            base = os.path.realpath(os.path.expanduser(str(root)))
         except OSError:
             continue
-        try:
-            candidate.relative_to(root_resolved)
-            sanitized = candidate
-            break
-        except ValueError:
+        base_prefix = base if base.endswith(os.sep) else base + os.sep
+
+        soft_base = os.path.normpath(os.path.expanduser(str(root)))
+        soft_base_prefix = soft_base if soft_base.endswith(os.sep) else soft_base + os.sep
+        soft = os.path.normpath(raw)
+
+        if os.path.isabs(soft):
+            if soft == soft_base:
+                rel = ""
+            elif soft.startswith(soft_base_prefix):
+                rel = soft[len(soft_base_prefix) :]
+            elif soft == base:
+                rel = ""
+            elif soft.startswith(base_prefix):
+                rel = soft[len(base_prefix) :]
+            else:
+                continue
+        else:
+            rel = soft
+
+        if rel.startswith(".." + os.sep) or rel == "..":
             continue
+
+        fullpath = os.path.normpath(os.path.join(base, rel))
+        if fullpath != base and not fullpath.startswith(base_prefix):
+            continue
+        fullpath = os.path.realpath(fullpath)
+        if fullpath != base and not fullpath.startswith(base_prefix):
+            continue
+        sanitized = fullpath
+        break
 
     if sanitized is None:
         raise IngestPathError(403, "path_not_allowed", "file_path is outside allowed ingest roots")
 
-    if not sanitized.is_file():
-        if not sanitized.exists():
+    if not os.path.isfile(sanitized):
+        if not os.path.exists(sanitized):
             raise IngestPathError(404, "path_not_found", "Ingest file not found")
         raise IngestPathError(400, "invalid_path", "file_path must be a regular file")
 
-    return sanitized
+    return Path(sanitized)
