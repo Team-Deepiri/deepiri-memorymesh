@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+import os
 import socket
 from pathlib import Path
 
@@ -158,24 +159,21 @@ def validate_ingest_file_path(file_path: str | Path, allowed_roots: list[Path]) 
         raise IngestPathError(400, "invalid_path", "file_path is required")
 
     try:
-        # User input is expanded/resolved, then constrained to allowed_roots via
-        # relative_to below before any ingest I/O — reject paths outside those roots.
-        candidate = Path(str(file_path)).expanduser()  # codeql[py/path-injection]
+        expanded = os.path.expanduser(str(file_path))
     except (TypeError, ValueError) as exc:
         raise IngestPathError(400, "invalid_path", "Invalid file_path") from exc
 
-    # Reject empty / obviously bad inputs after expand.
-    if str(candidate).strip() == "":
+    if not expanded.strip():
         raise IngestPathError(400, "invalid_path", "Invalid file_path")
 
     try:
-        resolved = candidate.resolve(strict=True)
-    except FileNotFoundError as exc:
-        raise IngestPathError(404, "path_not_found", "Ingest file not found") from exc
+        resolved = os.path.realpath(expanded)
     except OSError as exc:
         raise IngestPathError(400, "invalid_path", "Invalid file_path") from exc
 
-    if not resolved.is_file():
+    if not os.path.isfile(resolved):
+        if not os.path.exists(resolved):
+            raise IngestPathError(404, "path_not_found", "Ingest file not found")
         raise IngestPathError(400, "invalid_path", "file_path must be a regular file")
 
     if not allowed_roots:
@@ -183,13 +181,12 @@ def validate_ingest_file_path(file_path: str | Path, allowed_roots: list[Path]) 
 
     for root in allowed_roots:
         try:
-            root_resolved = root.resolve()
+            root_real = os.path.realpath(str(root))
         except OSError:
             continue
-        try:
-            resolved.relative_to(root_resolved)
-            return resolved
-        except ValueError:
-            continue
+        # Trailing sep so /allowed is not a prefix of /allowed-elsewhere.
+        root_prefix = root_real if root_real.endswith(os.sep) else root_real + os.sep
+        if resolved == root_real or resolved.startswith(root_prefix):
+            return Path(resolved)
 
     raise IngestPathError(403, "path_not_allowed", "file_path is outside allowed ingest roots")
