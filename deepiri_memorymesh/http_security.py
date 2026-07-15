@@ -199,10 +199,15 @@ def validate_ingest_file_path(file_path: str | Path, allowed_roots: list[Path]) 
         if rel.startswith(".." + os.sep) or rel == "..":
             continue
 
-        fullpath = os.path.realpath(os.path.normpath(os.path.join(base, rel)))
-        if fullpath != base and not fullpath.startswith(base_prefix):
+        fullpath = os.path.normpath(os.path.join(base, rel))
+        if fullpath != base and not fullpath.startswith(base + os.sep):
             continue
+        fullpath = os.path.realpath(fullpath)
+        if fullpath != base and not fullpath.startswith(base + os.sep):
+            continue
+        # codeql[py/path-injection] constrained to trusted `base` by startswith above
         if not os.path.isfile(fullpath):
+            # codeql[py/path-injection] constrained to trusted `base` by startswith above
             if not os.path.exists(fullpath):
                 raise IngestPathError(404, "path_not_found", "Ingest file not found")
             raise IngestPathError(400, "invalid_path", "file_path must be a regular file")
