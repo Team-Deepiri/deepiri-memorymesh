@@ -93,13 +93,24 @@ The TUI (`memorymesh tui`) adds **[7] Export**. The HTTP API accepts `POST /expo
 
 ## Cross-provider chat transfer
 
-Move a full conversation from one tool to another:
+Move a conversation from one tool to another without dumping the whole project:
 
 ```bash
 memorymesh init
-memorymesh go --project myrepo --from cursor --to claude
+
+# Workspace Session Bridge — auto-picks the latest session for this cwd
+memorymesh resume -p lighthouse --from claude --to cursor -w ~/lighthouse
+
+# Or target any provider pair dynamically
+memorymesh resume -p myrepo --from claude --to gemini
+
+# Manual conversation filter still supported
+memorymesh transfer -p lighthouse --from claude --to cursor -c e7fcaea3 --push
 ```
 
-That syncs source exports, builds a transfer bundle, writes paste-ready `context.md` to the target inbox, and ingests the chat under the target provider in MemoryMesh.
+**How it works (novel bits):**
+- Correlates sessions by **workspace slug** (`~/.claude/projects/-home-user-repo/` ↔ workspace path)
+- Builds a **resume brief** (compressed summary + tail turns) instead of 10k+ message dumps
+- Delivers via a **dynamic provider registry** — handoff paths and import hints resolve per target, with a generic fallback for unknown agents
 
 See [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) for `transfer`, `transfer-deliver`, and `install-push`.

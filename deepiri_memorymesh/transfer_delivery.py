@@ -7,8 +7,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .models import MemoryRecord, now_iso
+from .provider_registry import import_instructions
+from .session_bridge import build_resume_pack, render_resume_brief
 from .transfer_formats import (
-    import_instructions,
     load_transfer_bundle,
     messages_from_bundle,
     render_markdown,
@@ -55,7 +56,8 @@ def deliver_transfer_bundle(
     transfer_json = out_dir / "transfer.json"
     instructions_path = out_dir / "IMPORT_INSTRUCTIONS.txt"
 
-    context_md.write_text(render_markdown(bundle), encoding="utf-8")
+    pack = build_resume_pack(bundle)
+    context_md.write_text(render_resume_brief(pack), encoding="utf-8")
     import_json.write_text(
         json.dumps(render_provider_json(bundle, key), ensure_ascii=True, indent=2) + "\n",
         encoding="utf-8",
