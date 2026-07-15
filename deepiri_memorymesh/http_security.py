@@ -159,40 +159,33 @@ def validate_ingest_file_path(file_path: str | Path, allowed_roots: list[Path]) 
         raise IngestPathError(400, "invalid_path", "file_path is required")
 
     try:
-        expanded = os.path.expanduser(str(file_path))
-    except (TypeError, ValueError) as exc:
-        raise IngestPathError(400, "invalid_path", "Invalid file_path") from exc
-
-    if not expanded.strip():
-        raise IngestPathError(400, "invalid_path", "Invalid file_path")
-
-    try:
-        resolved = os.path.realpath(expanded)
-    except OSError as exc:
+        candidate = Path(str(file_path).strip()).expanduser().resolve(strict=False)
+    except (TypeError, ValueError, OSError) as exc:
         raise IngestPathError(400, "invalid_path", "Invalid file_path") from exc
 
     if not allowed_roots:
         raise IngestPathError(403, "path_not_allowed", "No ingest roots configured")
 
     # Containment check first so path I/O only runs on allowlisted paths.
-    sanitized: str | None = None
+    sanitized: Path | None = None
     for root in allowed_roots:
         try:
-            root_real = os.path.realpath(str(root))
+            root_resolved = Path(root).expanduser().resolve(strict=False)
         except OSError:
             continue
-        # Trailing sep so /allowed is not a prefix of /allowed-elsewhere.
-        root_prefix = root_real if root_real.endswith(os.sep) else root_real + os.sep
-        if resolved == root_real or resolved.startswith(root_prefix):
-            sanitized = resolved
+        try:
+            candidate.relative_to(root_resolved)
+            sanitized = candidate
             break
+        except ValueError:
+            continue
 
     if sanitized is None:
         raise IngestPathError(403, "path_not_allowed", "file_path is outside allowed ingest roots")
 
-    if not os.path.isfile(sanitized):
-        if not os.path.exists(sanitized):
+    if not sanitized.is_file():
+        if not sanitized.exists():
             raise IngestPathError(404, "path_not_found", "Ingest file not found")
         raise IngestPathError(400, "invalid_path", "file_path must be a regular file")
 
-    return Path(sanitized)
+    return sanitized
