@@ -95,7 +95,7 @@ class OpenCodeCompiledPluginRuntimeTests(unittest.TestCase):
             project="runtime-proj",
             service_url="http://127.0.0.1:8765",
         )
-        self.plugin_ts = paths[0]
+        self.plugin_ts = next(p for p in paths if p.suffix == ".ts")
         self.bundle_js = self.work / "memorymesh.bundle.mjs"
         self._compile_plugin()
 

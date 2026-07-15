@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import socket
+import ssl
 import tempfile
 import threading
 import unittest
@@ -648,6 +649,12 @@ class DnsConnectionPinningTests(unittest.TestCase):
                 wrap_hosts.append(server_hostname or "")
 
         class FakeContext:
+            verify_mode = ssl.CERT_REQUIRED
+            post_handshake_auth = None
+
+            def set_alpn_protocols(self, protocols):  # noqa: ANN001
+                return None
+
             def wrap_socket(self, sock: FakeSock, server_hostname: str | None = None) -> FakeSSLSock:
                 return FakeSSLSock(sock, server_hostname=server_hostname)
 
@@ -702,6 +709,12 @@ class DnsConnectionPinningTests(unittest.TestCase):
                 return None
 
         class FakeContext:
+            verify_mode = ssl.CERT_REQUIRED
+            post_handshake_auth = None
+
+            def set_alpn_protocols(self, protocols):  # noqa: ANN001
+                return None
+
             def wrap_socket(self, sock: FakeSock, server_hostname: str | None = None) -> FakeSock:
                 return FakeSock()
 
