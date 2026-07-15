@@ -731,6 +731,124 @@ class MemoryStore:
             )
             return [self._unseal_message_dict(r) for r in cur.fetchall()]
 
+    def list_messages_filtered(
+        self,
+        project: str,
+        provider: str | None = None,
+        conversation_id: str | None = None,
+    ) -> list[dict]:
+        """List messages, optionally filtered by provider and/or conversation id substring."""
+        self.encryption_context()
+        clauses = ["project = ?"]
+        params: list[str] = [project]
+        if provider:
+            clauses.append("provider = ?")
+            params.append(provider)
+        if conversation_id:
+            clauses.append("conversation_id LIKE ?")
+            params.append(f"%{conversation_id}%")
+        where = " AND ".join(clauses)
+        with self.connection() as conn:
+            cols = "id, provider, project, conversation_id, role, content, timestamp, metadata_json"
+            if self._message_has_source_key_column(conn):
+                cols += ", source_key"
+            cur = conn.execute(
+                f"""
+                SELECT {cols}
+                FROM memory_messages
+                WHERE {where}
+                ORDER BY timestamp ASC, id ASC
+                """,
+                params,
+            )
+            return [self._unseal_message_dict(r) for r in cur.fetchall()]
+
+    def list_conversations(
+        self,
+        project: str,
+        provider: str | None = None,
+        limit: int = 30,
+    ) -> list[dict]:
+        """Summarize conversations for a project (message count, last timestamp, preview)."""
+        self.encryption_context()
+        clauses = ["project = ?"]
+        params: list[str | int] = [project]
+        if provider:
+            clauses.append("provider = ?")
+            params.append(provider)
+        where = " AND ".join(clauses)
+        params.append(limit)
+        with self.connection() as conn:
+            cur = conn.execute(
+                f"""
+                SELECT
+                    conversation_id,
+                    provider,
+                    COUNT(*) AS message_count,
+                    MAX(timestamp) AS last_timestamp
+                FROM memory_messages
+                WHERE {where}
+                GROUP BY provider, conversation_id
+                ORDER BY last_timestamp DESC
+                LIMIT ?
+                """,
+                params,
+            )
+            rows = [dict(r) for r in cur.fetchall()]
+            for row in rows:
+                preview = conn.execute(
+                    """
+                    SELECT id, content FROM memory_messages
+                    WHERE project = ? AND provider = ? AND conversation_id = ? AND role = 'user'
+                    ORDER BY timestamp DESC, id DESC
+                    LIMIT 1
+                    """,
+                    (project, row["provider"], row["conversation_id"]),
+                ).fetchone()
+                if preview is None:
+                    row["last_user_preview"] = ""
+                else:
+                    unsealed = self._unseal_message_dict(preview)
+                    row["last_user_preview"] = str(unsealed.get("content") or "")
+            return rows
+
+    def list_agent_state(self, project: str) -> list[dict]:
+        ctx = self.encryption_context()
+        with self.connection() as conn:
+            cur = conn.execute(
+                """
+                SELECT id, project, agent, state_key, value, updated_at
+                FROM agent_state
+                WHERE project = ?
+                ORDER BY agent ASC, state_key ASC
+                """,
+                (project,),
+            )
+            out: list[dict] = []
+            for row in cur.fetchall():
+                value = str(row["value"])
+                if ctx is not None:
+                    from .crypto import decrypt_field, is_envelope
+
+                    if is_envelope(value):
+                        value = decrypt_field(
+                            ctx,
+                            value,
+                            table="agent_state",
+                            column="value",
+                            row_identity=str(row["id"]),
+                        )
+                out.append(
+                    {
+                        "project": row["project"],
+                        "agent": row["agent"],
+                        "state_key": row["state_key"],
+                        "value": value,
+                        "updated_at": row["updated_at"],
+                    }
+                )
+            return out
+
     def upsert_summary(self, rec: CompressedRecord) -> str:
         """Insert or update summary for (project, conversation_id).
 

@@ -35,6 +35,49 @@ def _claude_messages_from_mapping(mapping: dict[str, Any]) -> list[dict[str, Any
     return out
 
 
+def _claude_session_line(item: dict[str, Any]) -> dict[str, Any] | None:
+    """Parse one Claude Code session JSONL line (history or project transcript)."""
+    display = normalize_content(item.get("display") or item.get("content"))
+    msg_type = safe_str(item.get("type"))
+    role = safe_str(item.get("role"))
+    if not role:
+        if msg_type in {"user", "human"}:
+            role = "user"
+        elif msg_type in {"assistant", "message"}:
+            role = "assistant"
+        elif display and item.get("sessionId"):
+            role = "user"
+        else:
+            role = "unknown"
+    content = display
+    if not content:
+        message = item.get("message")
+        if isinstance(message, dict):
+            content = normalize_content(message.get("content") or message.get("text"))
+            role = safe_str(message.get("role"), role)
+        elif isinstance(message, list):
+            parts: list[str] = []
+            for part in message:
+                if isinstance(part, dict):
+                    txt = normalize_content(part.get("text") or part.get("content"))
+                    if txt:
+                        parts.append(txt)
+            content = "\n".join(parts)
+    if not content:
+        return None
+    return {
+        "role": role,
+        "content": content,
+        "timestamp": safe_str(item.get("timestamp") or item.get("created_at")) or now_iso(),
+        "metadata": {
+            "source": "claude-session",
+            "session_id": safe_str(item.get("sessionId") or item.get("session_id")),
+            "project_path": safe_str(item.get("project") or item.get("cwd")),
+            "uuid": safe_str(item.get("uuid")),
+        },
+    }
+
+
 def parse_claude_file(provider: str, project: str, file_path: Path) -> list[MemoryRecord]:
     if file_path.suffix.lower() == ".jsonl":
         messages: list[dict[str, Any]] = []
@@ -47,22 +90,9 @@ def parse_claude_file(provider: str, project: str, file_path: Path) -> list[Memo
                 continue
             if not isinstance(item, dict):
                 continue
-            # Claude Code history.jsonl often stores user command text in `display`.
-            display = normalize_content(item.get("display") or item.get("content"))
-            if not display:
-                continue
-            messages.append(
-                {
-                    "role": "user",
-                    "content": display,
-                    "timestamp": safe_str(item.get("timestamp")) or now_iso(),
-                    "metadata": {
-                        "source": "claude-history",
-                        "session_id": safe_str(item.get("sessionId")),
-                        "project_path": safe_str(item.get("project")),
-                    },
-                }
-            )
+            parsed = _claude_session_line(item)
+            if parsed:
+                messages.append(parsed)
         if messages:
             return records_from_messages(provider, project, file_path.stem, messages)
         return parse_generic_file(provider, project, file_path)

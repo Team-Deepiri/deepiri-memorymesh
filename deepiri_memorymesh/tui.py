@@ -15,6 +15,7 @@ HELP = [
     "[4] Embed",
     "[5] Stats",
     "[6] Query (interactive input)",
+    "[7] Export (txt/md/json, file or clipboard)",
     "[h] Provider usage steps",
     "[p] Change project",
     "[q] Quit",
@@ -81,6 +82,37 @@ def _pick_provider(stdscr: curses.window, providers: list[str], title: str) -> s
             choice = ch - ord("1")
             if 0 <= choice < len(providers):
                 return providers[choice]
+
+
+
+def _export_project(stdscr: curses.window, mesh: MemoryMesh, project: str) -> tuple[str, str]:
+    fmt = _readline(stdscr, "Format [md/txt/json] (md)> ") or "md"
+    dest = _readline(stdscr, "Destination: file path, 'clipboard', or Enter for stdout> ")
+    provider = _readline(stdscr, "Provider filter (optional)> ") or None
+    out_path = None
+    to_clipboard = False
+    if dest:
+        if dest.strip().lower() in ("clipboard", "clip", "cb"):
+            to_clipboard = True
+        else:
+            from pathlib import Path
+
+            out_path = Path(dest.strip())
+    content, written, clipboard_ok = mesh.export_project(
+        project=project,
+        fmt=fmt,
+        provider=provider,
+        output_path=out_path,
+        to_clipboard=to_clipboard,
+    )
+    if written:
+        return f"Exported to {written}", ""
+    if to_clipboard:
+        if clipboard_ok:
+            return "Copied export to clipboard", f"{len(content)} characters"
+        return "Clipboard copy failed (install wl-copy/xclip/xsel)", ""
+    preview = content[:400].replace("\n", " ")
+    return "Export preview (stdout)", preview + ("…" if len(content) > 400 else "")
 
 
 def run_tui(default_project: str = "deepiri") -> None:
@@ -202,6 +234,11 @@ def run_tui(default_project: str = "deepiri") -> None:
                         f"{r['provider']}:{r['score']:.2f}" for r in rows[:3]
                     )
                     detail = str(rows[0]["content"]).replace("\n", " ")[:220]
+            elif ch == ord("7"):
+                status, detail = _export_project(stdscr, mesh, project)
+                if detail:
+                    status = f"{status} — {detail}"
+
             elif ch in (ord("h"), ord("H")):
                 to_p = _pick_provider(stdscr, settings.providers[:9], "Provider steps for")
                 if not to_p:

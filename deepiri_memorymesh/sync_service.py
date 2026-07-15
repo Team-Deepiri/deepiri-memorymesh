@@ -17,13 +17,30 @@ from .embedding_codec import (
     sanitize_bridge_diagnostic,
 )
 from .embeddings import Embedder, EmbeddingStatus
+from .export import (
+    ExportFormat,
+    copy_to_clipboard,
+    gather_project_export,
+    normalize_format,
+    render_export,
+)
 from .file_scan import collect_provider_files
 from .models import AgentState, CompressedRecord, MemoryRecord, now_iso
+from .packaging import (
+    build_udata_payload,
+    load_udata,
+    transfer_payload_for_provider,
+    udata_to_memory_records,
+    write_udata_archive,
+    write_udata_json,
+)
 from .providers import parse_provider_file
 from .providers.registry import SyncAutoProviderOutcome, get_provider
 from .retrieval import format_rank_diagnostic, rank_rows_with_report
+from .scanner import DeviceScanReport, ingest_device, scan_device
 from .search_index import select_candidate_message_ids, tokenize_for_index
 from .storage import MemoryStore
+from .transfer_delivery import DeliveryResult, deliver_transfer_bundle
 
 logger = logging.getLogger(__name__)
 
@@ -167,6 +184,198 @@ class MemoryMesh:
 
     def init(self) -> None:
         self.store.init()
+
+    def scan_device(self) -> DeviceScanReport:
+        return scan_device()
+
+    def ingest_device(
+        self,
+        project: str,
+        providers: list[str] | None = None,
+    ) -> DeviceScanReport:
+        self.init()
+        return ingest_device(project=project, store=self.store, providers=providers)
+
+    def package_udata(
+        self,
+        project: str,
+        output_path: Path,
+        ingest_first: bool = True,
+        providers: list[str] | None = None,
+        compress_after: bool = False,
+    ) -> Path:
+        """Scan device, optionally ingest, export portable u-data package."""
+        self.init()
+        if ingest_first:
+            scan_report = self.ingest_device(project=project, providers=providers)
+        else:
+            scan_report = scan_device()
+        if compress_after:
+            self.compress_project(project)
+        messages = list(self.store.list_messages(project))
+        summaries = list(self.store.list_summaries(project))
+        payload = build_udata_payload(project, messages, summaries, scan=scan_report)
+        out = output_path.expanduser()
+        if str(out).endswith((".tar.gz", ".tgz")):
+            return write_udata_archive(payload, out)
+        return write_udata_json(payload, out)
+
+    def import_udata(self, package_path: Path, project_override: str | None = None) -> int:
+        payload = load_udata(package_path)
+        records = udata_to_memory_records(payload, project_override=project_override)
+        return self.store.insert_messages(records)
+
+    def export_project(
+        self,
+        project: str,
+        fmt: str = "md",
+        provider: str | None = None,
+        output_path: Path | None = None,
+        to_clipboard: bool = False,
+    ) -> tuple[str, Path | None, bool]:
+        """Export project memory as text. Returns (content, written_path, clipboard_ok)."""
+        export_fmt: ExportFormat = normalize_format(fmt)
+        messages = list(self.store.list_messages(project))
+        summaries = list(self.store.list_summaries(project))
+        agent_state = list(self.store.list_agent_state(project))
+        stats = self.stats(project)
+        payload = gather_project_export(
+            project=project,
+            messages=messages,
+            summaries=summaries,
+            agent_state=agent_state,
+            stats=stats,
+            provider=provider,
+        )
+        content = render_export(payload, export_fmt)
+        written: Path | None = None
+        if output_path is not None:
+            out = output_path.expanduser()
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(content, encoding="utf-8")
+            written = out
+        clipboard_ok = False
+        if to_clipboard:
+            clipboard_ok = copy_to_clipboard(content)
+        return content, written, clipboard_ok
+
+    def export_provider_transfer(
+        self,
+        project: str,
+        from_provider: str,
+        to_provider: str,
+        out_path: Path,
+    ) -> tuple[Path, int]:
+        messages = list(self.store.list_messages(project))
+        payload = transfer_payload_for_provider(messages, project, from_provider, to_provider)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8")
+        return out_path, len(payload.get("messages") or [])
+
+    def deliver_transfer(self, bundle_path: Path, target: str) -> DeliveryResult:
+        return deliver_transfer_bundle(bundle_path=bundle_path, target=target, mesh=self)
+
+    def go_transfer(
+        self,
+        project: str,
+        from_provider: str,
+        to_provider: str,
+        sync_source: bool = True,
+        compress_first: bool = True,
+        copy_clipboard: bool = True,
+        conversation_id: str | None = None,
+    ) -> tuple[Path, DeliveryResult]:
+        source = from_provider.strip().lower()
+        if sync_source:
+            raw = self.settings.provider_paths.get(source, "")
+            if raw:
+                source_dir = Path(raw).expanduser()
+                if source_dir.exists() and source_dir.is_dir():
+                    globs = self.settings.provider_globs.get(
+                        source, ["**/*.json", "**/*.jsonl"]
+                    )
+                    self.sync_directory(
+                        provider=source,
+                        project=project,
+                        directory=source_dir,
+                        recursive=True,
+                        include_globs=globs,
+                    )
+        if compress_first and not conversation_id:
+            self.compress_project(project)
+        bundle_path, _, _ = self.transfer(
+            project=project,
+            from_provider=source,
+            to_provider=to_provider,
+            out_path=None,
+            push_via_bridge=False,
+            conversation_id=conversation_id,
+        )
+        delivery = self.deliver_transfer(bundle_path, to_provider.strip().lower())
+        if copy_clipboard:
+            from .transfer_delivery import try_clipboard_copy
+
+            try_clipboard_copy(delivery.context_md.read_text(encoding="utf-8"))
+        return bundle_path, delivery
+
+    def resume_session(
+        self,
+        *,
+        project: str,
+        from_provider: str,
+        to_provider: str,
+        workspace: Path,
+        conversation_id: str | None = None,
+        sync_source: bool = True,
+    ) -> tuple[Path, DeliveryResult, dict]:
+        """Workspace Session Bridge: auto-resolve session, transfer, deliver, write handoffs."""
+        from .handoff import write_handoff_files
+        from .session_bridge import pick_best_session
+
+        self.init()
+        source = from_provider.strip().lower()
+        target = to_provider.strip().lower()
+        ws = workspace.expanduser().resolve()
+
+        if sync_source:
+            self.ingest_device(project=project, providers=[source])
+
+        conv = conversation_id
+        if not conv:
+            match = pick_best_session(
+                workspace=ws,
+                provider=source,
+                store=self.store,
+                project=project,
+            )
+            if match is None:
+                raise ValueError(
+                    f"No session found for workspace={ws} provider={source}. "
+                    "Pass --conversation explicitly or run from the project directory."
+                )
+            conv = match.conversation_id
+
+        bundle_path, count, delivery = self.transfer(
+            project=project,
+            from_provider=source,
+            to_provider=target,
+            push_via_bridge=True,
+            conversation_id=conv,
+            include_summaries=True,
+        )
+        if count == 0:
+            raise ValueError(f"No messages matched conversation={conv!r}")
+        assert delivery is not None
+
+        handoff_meta = write_handoff_files(
+            bundle_path,
+            ws,
+            provider=target,
+            use_resume_brief=True,
+        )
+        handoff_meta["resolved_conversation_id"] = conv
+        handoff_meta["message_count"] = count
+        return bundle_path, delivery, handoff_meta
 
     def embedding_status(self) -> EmbeddingStatus:
         return self.embedder.status()
@@ -800,20 +1009,27 @@ class MemoryMesh:
         to_provider: str,
         out_path: Path | None = None,
         push_via_bridge: bool = False,
-    ) -> tuple[Path, int]:
-        """Transfer context; returns ``(path, count)`` for compatibility.
+        include_summaries: bool = True,
+        conversation_id: str | None = None,
+    ) -> tuple[Path, int, DeliveryResult | None]:
+        """Write a transfer bundle; optionally deliver via inbox formats.
 
-        Prefer :meth:`transfer_with_report` so push diagnostics are tied to the
-        same call. :attr:`last_transfer_push` is updated for compatibility only.
+        Returns ``(path, count, delivery_or_none)``. Bridge-script push
+        diagnostics remain on :meth:`transfer_with_report`.
         """
         path, count, _push = self.transfer_with_report(
             project=project,
             from_provider=from_provider,
             to_provider=to_provider,
             out_path=out_path,
-            push_via_bridge=push_via_bridge,
+            push_via_bridge=False,
+            include_summaries=include_summaries,
+            conversation_id=conversation_id,
         )
-        return path, count
+        delivery: DeliveryResult | None = None
+        if push_via_bridge:
+            delivery = self.deliver_transfer(path, to_provider.strip().lower())
+        return path, count, delivery
 
     def transfer_with_report(
         self,
@@ -822,16 +1038,38 @@ class MemoryMesh:
         to_provider: str,
         out_path: Path | None = None,
         push_via_bridge: bool = False,
+        include_summaries: bool = True,
+        conversation_id: str | None = None,
     ) -> tuple[Path, int, TransferPushReport]:
         """Transfer context and return ``(path, count, push_report)`` for this call."""
         source = from_provider.strip().lower()
         target = to_provider.strip().lower()
-        rows = [dict(r) for r in self.store.list_messages_by_provider(project, source)]
+        if conversation_id:
+            rows = list(
+                self.store.list_messages_filtered(
+                    project, provider=source, conversation_id=conversation_id
+                )
+            )
+        else:
+            rows = list(self.store.list_messages_by_provider(project, source))
+        summaries: list[dict[str, str]] = []
+        if include_summaries:
+            for row in self.store.list_summaries(project):
+                if conversation_id and conversation_id not in str(row["conversation_id"]):
+                    continue
+                summaries.append(
+                    {
+                        "conversation_id": str(row["conversation_id"]),
+                        "summary": str(row["summary"]),
+                        "method": str(row["method"]),
+                    }
+                )
+        conv_label = conversation_id or f"transfer-{source}-to-{target}"
         payload = {
             "project": project,
             "from_provider": source,
             "to_provider": target,
-            "conversation_id": f"transfer-{source}-to-{target}",
+            "conversation_id": conv_label,
             "messages": [
                 {
                     "role": row["role"],
@@ -845,13 +1083,20 @@ class MemoryMesh:
                 }
                 for row in rows
             ],
+            "summaries": summaries,
         }
         if out_path is None:
             out_dir = Path.home() / ".config" / "deepiri-memorymesh" / "transfers"
             out_dir.mkdir(parents=True, exist_ok=True)
-            out_path = out_dir / f"{project}.{source}-to-{target}.json"
+            suffix = ""
+            if conversation_id:
+                safe = conversation_id.replace("/", "-")[:40]
+                suffix = f".{safe}"
+            out_path = out_dir / f"{project}.{source}-to-{target}{suffix}.json"
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8")
+        out_path.write_text(
+            json.dumps(payload, ensure_ascii=True, indent=2) + "\n", encoding="utf-8"
+        )
 
         push = TransferPushReport(provider=target)
         if push_via_bridge:

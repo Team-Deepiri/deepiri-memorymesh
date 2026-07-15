@@ -552,12 +552,11 @@ class ShellAndJsonSecurityTests(unittest.TestCase):
 
     def test_opencode_native_installs_plugin_only_under_plugins(self) -> None:
         paths = install_native_integration("opencode", "proj", "http://127.0.0.1:8765")
-        self.assertEqual(len(paths), 1)
-        plugin = paths[0]
-        self.assertEqual(
-            plugin,
-            self.home / ".config" / "opencode" / "plugins" / "memorymesh.ts",
-        )
+        plugin = self.home / ".config" / "opencode" / "plugins" / "memorymesh.ts"
+        push = self.home / ".local" / "bin" / "memorymesh-push-opencode"
+        self.assertIn(plugin, paths)
+        self.assertIn(push, paths)
+        self.assertEqual(set(paths), {plugin, push})
         text = plugin.read_text(encoding="utf-8")
         self.assertNotIn(".claude", text)
         self.assertNotIn("transcript_path", text)

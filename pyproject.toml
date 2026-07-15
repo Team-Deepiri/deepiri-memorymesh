@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "memorymesh"
-version = "0.1.0"
+version = "0.2.0"
 description = "Local-first memory layer for AI agents, coding tools, and automation"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -19,6 +19,9 @@ embeddings = [
 ]
 security = [
    "cryptography>=42.0.0",
+]
+dev = [
+    "pytest>=8.0",
 ]
 
 [project.scripts]

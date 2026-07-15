@@ -10,6 +10,7 @@ from .config import Settings, normalize_db_path
 from .integrations import (
     install_native_integration,
     install_bridge_script,
+    install_push_script,
     list_targets,
     write_hook_snippets,
     write_integration_template,
@@ -17,6 +18,8 @@ from .integrations import (
 from .legacy_import import LEGACY_DEFAULT_SOURCE, import_legacy_memory
 from .service_api import run_service
 from .sync_service import MemoryMesh, SyncDirectoryReport
+from .transfer_delivery import deliver_transfer_bundle, try_clipboard_copy
+from .transfer_formats import load_transfer_bundle, render_markdown, render_provider_json
 from .tui import run_tui
 from .providers.registry import list_providers
 from .embeddings import Embedder
@@ -24,14 +27,18 @@ from .embeddings import Embedder
 app = typer.Typer(help="Deepiri MemoryMesh CLI")
 state_app = typer.Typer(help="Manage shared agent state")
 bundle_app = typer.Typer(help="Export/import portable context bundles")
+package_app = typer.Typer(help="Device scan + portable u-data packaging")
+conv_app = typer.Typer(help="List and inspect stored conversations")
 migrations_app = typer.Typer(help="Schema migration status and apply")
 search_index_app = typer.Typer(help="Lexical candidate search-index status/rebuild")
 auth_app = typer.Typer(help="Manage HTTP bearer-token authentication (T37)")
 auth_token_app = typer.Typer(help="Create/list/revoke/rotate project-scoped tokens")
-pull_app = typer.Typer(help="Pull memory from explicit, token-gated external sources (T38)")
+pull_app = typer.Typer(help="Pull memory from device scan or token-gated external sources")
 encryption_app = typer.Typer(help="Optional encryption at rest (T33; requires memorymesh[security])")
 app.add_typer(state_app, name="state")
 app.add_typer(bundle_app, name="bundle")
+app.add_typer(package_app, name="package")
+app.add_typer(conv_app, name="conversations")
 app.add_typer(migrations_app, name="migrations")
 app.add_typer(search_index_app, name="search-index")
 app.add_typer(auth_app, name="auth")
@@ -71,6 +78,106 @@ def _echo_sync_summary(
         typer.echo(
             f"{head}Processed {report.processed} file(s), inserted {report.inserted} message(s)"
         )
+
+
+@app.command()
+def scan(
+    ingest: bool = typer.Option(False, "--ingest", help="Ingest discovered data into memory DB"),
+    project: str | None = typer.Option(
+        None,
+        "-p",
+        "--project",
+        help="Project namespace (required with --ingest)",
+    ),
+    provider: list[str] = typer.Option(
+        [],
+        "--provider",
+        help="Limit to provider(s): claude, cursor, opencode",
+    ),
+) -> None:
+    """Scan this device for Claude Code, Cursor, and OpenCode conversation data."""
+    mesh = _mesh()
+    providers = [p.lower() for p in provider] if provider else None
+    if ingest:
+        if not project:
+            typer.echo("error: --project is required when using --ingest")
+            raise typer.Exit(1)
+        mesh.init()
+        report = mesh.ingest_device(project=project, providers=providers)
+    else:
+        report = mesh.scan_device()
+    for line in report.summary_lines():
+        typer.echo(line)
+
+
+@pull_app.command("device")
+def pull_device(
+    project: str = typer.Option(..., "-p", "--project", help="Project namespace"),
+    provider: list[str] = typer.Option(
+        [],
+        "--provider",
+        help="Limit to provider(s): claude, cursor, opencode",
+    ),
+) -> None:
+    """Scan device and ingest Claude/Cursor/OpenCode messages (alias for scan --ingest)."""
+    mesh = _mesh()
+    mesh.init()
+    providers = [p.lower() for p in provider] if provider else None
+    report = mesh.ingest_device(project=project, providers=providers)
+    for line in report.summary_lines():
+        typer.echo(line)
+
+
+@package_app.command("build")
+def package_build(
+    project: str = typer.Option(..., "-p", "--project", help="Project namespace"),
+    out: Path = typer.Option(
+        ...,
+        "-o",
+        "--out",
+        help="Output path (.json or .tar.gz)",
+    ),
+    no_ingest: bool = typer.Option(False, help="Skip device ingest; export DB only"),
+    compress: bool = typer.Option(False, help="Compress conversations before export"),
+    provider: list[str] = typer.Option([], "--provider", help="Limit providers"),
+) -> None:
+    """One-shot: scan device, ingest, export portable u-data package."""
+    mesh = _mesh()
+    providers = [p.lower() for p in provider] if provider else None
+    path = mesh.package_udata(
+        project=project,
+        output_path=out,
+        ingest_first=not no_ingest,
+        providers=providers,
+        compress_after=compress,
+    )
+    typer.echo(f"Packaged u-data → {path}")
+
+
+@package_app.command("import")
+def package_import(
+    archive: Path = typer.Option(..., exists=True, help="udata .json or .tar.gz"),
+    project: str | None = typer.Option(None, "-p", "--project", help="Project override"),
+) -> None:
+    """Import a portable u-data package from another machine."""
+    mesh = _mesh()
+    mesh.init()
+    count = mesh.import_udata(archive, project_override=project)
+    typer.echo(f"Imported {count} message(s)")
+
+
+@package_app.command("transfer")
+def package_transfer(
+    project: str = typer.Option(..., "-p", "--project"),
+    from_provider: str = typer.Option(..., "--from"),
+    to_provider: str = typer.Option(..., "--to"),
+    out: Path = typer.Option(..., "-o", "--out"),
+) -> None:
+    """Export provider-specific transfer JSON for importing into another tool."""
+    mesh = _mesh()
+    mesh.init()
+    path, count = mesh.export_provider_transfer(project, from_provider, to_provider, out)
+    typer.echo(f"Wrote {count} message(s) → {path}")
 
 
 @app.command()
@@ -295,6 +402,59 @@ def stats(project: str = typer.Option(..., help="Project namespace")) -> None:
     typer.echo(f"conversations={s['conversations']}")
     typer.echo(f"summaries={s['summaries']}")
     typer.echo(f"embeddings={s['embeddings']}")
+
+
+@app.command()
+def export(
+    project: str = typer.Option(..., "-p", "--project", help="Project namespace"),
+    format: str = typer.Option(
+        "md",
+        "--format",
+        "-f",
+        help="Export format: txt, md (markdown), or json",
+    ),
+    out: Path | None = typer.Option(
+        None,
+        "-o",
+        "--out",
+        help="Write export to this file (prints to stdout if omitted)",
+    ),
+    clipboard: bool = typer.Option(
+        False,
+        "--clipboard",
+        help="Copy export to system clipboard (wl-copy, xclip, xsel, or pbcopy)",
+    ),
+    provider: str | None = typer.Option(
+        None,
+        "--provider",
+        help="Limit export to one provider's messages",
+    ),
+) -> None:
+    """Export all chat/memory for a project as txt, markdown, or JSON."""
+    mesh = _mesh()
+    mesh.init()
+    content, written, clipboard_ok = mesh.export_project(
+        project=project,
+        fmt=format,
+        provider=provider,
+        output_path=out,
+        to_clipboard=clipboard,
+    )
+    if written:
+        typer.echo(f"Exported → {written}")
+    if clipboard:
+        if clipboard_ok:
+            typer.echo("Copied to clipboard.")
+        else:
+            typer.echo(
+                "warning: could not copy to clipboard "
+                "(install wl-clipboard, xclip, or xsel on Linux)",
+                err=True,
+            )
+    if not written and not clipboard:
+        typer.echo(content, nl=False)
+        if not content.endswith("\n"):
+            typer.echo("")
 
 
 @app.command("embedding-status")
@@ -593,6 +753,12 @@ def transfer(
         False,
         help="Push transfer file to target provider bridge if installed",
     ),
+    conversation: str | None = typer.Option(
+        None,
+        "-c",
+        "--conversation",
+        help="Limit transfer to one conversation id (substring match)",
+    ),
 ) -> None:
     """Transfer context from one provider memory layer to another."""
     mesh = _mesh()
@@ -602,6 +768,7 @@ def transfer(
         to_provider=to_provider,
         out_path=out,
         push_via_bridge=push,
+        conversation_id=conversation,
     )
     typer.echo(f"Transferred {count} message(s) into {path}")
     if push and push_report.attempted:
@@ -615,29 +782,196 @@ def transfer(
             raise typer.Exit(code=1)
 
 
+@app.command("transfer-render")
+def transfer_render(
+    bundle: Path = typer.Option(..., exists=True, dir_okay=False, help="Transfer bundle JSON"),
+    to_provider: str = typer.Option(..., "--to", help="Target provider format"),
+    out: Path | None = typer.Option(None, help="Write markdown output path"),
+    json_out: Path | None = typer.Option(None, help="Write provider JSON output path"),
+) -> None:
+    """Render a transfer bundle as paste-ready markdown and/or provider JSON."""
+    payload = load_transfer_bundle(bundle)
+    md = render_markdown(payload)
+    provider_json = render_provider_json(payload, to_provider)
+    if out:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(md, encoding="utf-8")
+        typer.echo(f"Wrote markdown: {out}")
+    else:
+        typer.echo(md)
+    if json_out:
+        json_out.parent.mkdir(parents=True, exist_ok=True)
+        json_out.write_text(
+            json.dumps(provider_json, ensure_ascii=True, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        typer.echo(f"Wrote provider JSON: {json_out}")
+
+
+@app.command("transfer-deliver")
+def transfer_deliver(
+    bundle: Path = typer.Option(..., exists=True, dir_okay=False, help="Transfer bundle JSON"),
+    to_provider: str = typer.Option(..., "--to", help="Target provider"),
+    clipboard: bool = typer.Option(False, help="Copy context.md to clipboard if available"),
+) -> None:
+    """Deliver transfer bundle to target inbox and ingest into MemoryMesh."""
+    mesh = _mesh()
+    delivery = deliver_transfer_bundle(bundle_path=bundle, target=to_provider, mesh=mesh)
+    typer.echo(f"Delivered {delivery.message_count} message(s) to {delivery.inbox_dir}")
+    typer.echo(f"context: {delivery.context_md}")
+    typer.echo(f"import: {delivery.import_json}")
+    typer.echo(f"ingested: {delivery.ingested}")
+    if clipboard:
+        copied = try_clipboard_copy(delivery.context_md.read_text(encoding="utf-8"))
+        typer.echo("clipboard: copied" if copied else "clipboard: unavailable")
+
+
+@app.command("install-push")
+def install_push(
+    target: str = typer.Option(..., help="Target provider for push script"),
+) -> None:
+    """Install memorymesh-push-<target> script for transfer delivery."""
+    script_path = install_push_script(target=target)
+    typer.echo(f"Installed push script: {script_path}")
+
+
 @app.command()
 def go(
     project: str = typer.Option(..., help="Project namespace"),
     from_provider: str = typer.Option(..., "--from", help="Source provider"),
     to_provider: str = typer.Option(..., "--to", help="Target provider"),
+    conversation: str | None = typer.Option(
+        None,
+        "-c",
+        "--conversation",
+        help="Limit transfer to one conversation id (substring match)",
+    ),
+    no_sync: bool = typer.Option(False, help="Skip syncing source provider directory first"),
+    no_compress: bool = typer.Option(False, help="Skip compress step before transfer"),
+    no_clipboard: bool = typer.Option(False, help="Skip copying context to clipboard"),
 ) -> None:
-    """One-shot transfer workflow from source to target provider."""
+    """Full transfer workflow: sync source, compress, bundle, deliver to target inbox."""
     mesh = _mesh()
-    path, count, push_report = mesh.transfer_with_report(
+    bundle_path, delivery = mesh.go_transfer(
         project=project,
         from_provider=from_provider,
         to_provider=to_provider,
-        out_path=None,
-        push_via_bridge=True,
+        sync_source=not no_sync,
+        compress_first=not no_compress,
+        copy_clipboard=not no_clipboard,
+        conversation_id=conversation,
     )
-    typer.echo(f"Transferred {count} message(s) into {path}")
-    if push_report.attempted and not push_report.success:
+    typer.echo(f"Bundle: {bundle_path}")
+    typer.echo(f"Delivered {delivery.message_count} message(s) to {delivery.inbox_dir}")
+    typer.echo(f"Paste into {to_provider}: {delivery.context_md}")
+    typer.echo(delivery.instructions_path.read_text(encoding="utf-8"))
+
+
+@conv_app.command("list")
+def conversations_list(
+    project: str = typer.Option(..., "-p", "--project", help="Project namespace"),
+    provider: str | None = typer.Option(None, "--provider", help="Filter by provider"),
+    limit: int = typer.Option(20, min=1, max=100),
+) -> None:
+    """List stored conversations (newest first) with message counts and previews."""
+    mesh = _mesh()
+    rows = mesh.store.list_conversations(project=project, provider=provider, limit=limit)
+    if not rows:
+        typer.echo(f"No conversations for project={project}")
+        raise typer.Exit(0)
+    for row in rows:
+        preview = str(row["last_user_preview"] or "").replace("\n", " ")[:120]
         typer.echo(
-            f"Push failed for {push_report.provider}: {push_report.message}",
-            err=True,
+            f"{row['conversation_id']}\t"
+            f"provider={row['provider']}\t"
+            f"msgs={row['message_count']}\t"
+            f"last={row['last_timestamp']}"
         )
-        raise typer.Exit(code=1)
-    typer.echo(f"Next: open {to_provider} and import/use the transfer context if needed.")
+        if preview:
+            typer.echo(f"  preview: {preview}")
+
+
+@app.command()
+def resume(
+    project: str = typer.Option(..., "-p", "--project", help="Project namespace"),
+    from_provider: str = typer.Option(..., "--from", help="Source provider"),
+    to_provider: str = typer.Option(..., "--to", help="Target provider"),
+    workspace: Path | None = typer.Option(
+        None,
+        "-w",
+        "--workspace",
+        help="Workspace to correlate sessions (default: cwd)",
+    ),
+    conversation: str | None = typer.Option(
+        None,
+        "-c",
+        "--conversation",
+        help="Optional conversation id; auto-detected from workspace when omitted",
+    ),
+    no_sync: bool = typer.Option(False, help="Skip syncing source provider first"),
+    clipboard: bool = typer.Option(True, help="Copy resume brief to clipboard"),
+) -> None:
+    """Workspace Session Bridge — auto-pick source session and resume in target agent."""
+    mesh = _mesh()
+    ws = (workspace or Path.cwd()).expanduser().resolve()
+    try:
+        bundle_path, delivery, meta = mesh.resume_session(
+            project=project,
+            from_provider=from_provider,
+            to_provider=to_provider,
+            workspace=ws,
+            conversation_id=conversation,
+            sync_source=not no_sync,
+        )
+    except ValueError as exc:
+        typer.echo(f"error: {exc}")
+        raise typer.Exit(1) from exc
+
+    typer.echo(f"Resolved session: {meta.get('resolved_conversation_id')}")
+    typer.echo(f"Transferred {meta.get('message_count')} message(s)")
+    typer.echo(f"Bundle: {bundle_path}")
+    typer.echo(f"Inbox: {delivery.context_md}")
+    for path in meta.get("handoff_files") or []:
+        typer.echo(f"Handoff: {path}")
+    if clipboard:
+        copied = try_clipboard_copy(delivery.context_md.read_text(encoding="utf-8"))
+        typer.echo("clipboard: copied" if copied else "clipboard: unavailable")
+    typer.echo(
+        f"\nTarget agent ({to_provider}) can read the handoff file(s) above "
+        f"or inbox context.md to continue the session."
+    )
+
+
+@app.command()
+def handoff(
+    project: str = typer.Option(..., "-p", "--project", help="Project namespace"),
+    from_provider: str = typer.Option(..., "--from", help="Source provider"),
+    to_provider: str = typer.Option(..., "--to", help="Target provider"),
+    conversation: str | None = typer.Option(
+        None,
+        "-c",
+        "--conversation",
+        help="Conversation id (substring). Auto-detected when omitted.",
+    ),
+    workspace: Path | None = typer.Option(
+        None,
+        "-w",
+        "--workspace",
+        help="Workspace directory for provider handoff files (default: cwd)",
+    ),
+    no_sync: bool = typer.Option(False, help="Skip syncing source provider first"),
+    clipboard: bool = typer.Option(True, help="Copy handoff markdown to clipboard"),
+) -> None:
+    """Alias for resume — transfer one session with workspace-aware handoff files."""
+    resume(
+        project=project,
+        from_provider=from_provider,
+        to_provider=to_provider,
+        workspace=workspace,
+        conversation=conversation,
+        no_sync=no_sync,
+        clipboard=clipboard,
+    )
 
 
 @app.command()

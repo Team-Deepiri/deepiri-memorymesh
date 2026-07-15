@@ -1,4 +1,4 @@
-# Memory Mesh
+# Deepiri MemoryMesh
 
 A local-first memory layer for AI agents, coding tools, and internal automation. Access it through Python, CLI, local HTTP, TUI, and provider integrations.
 
@@ -156,6 +156,62 @@ memorymesh pull api --url https://example.com/export.jsonl \
 ```
 
 Supports only generic `json` / `jsonl` / Memory Mesh `bundle` payloads — not provider account-history APIs. HTTPS-only by default; private/loopback needs `--allow-private`.
+
+## Device scan & portable packaging
+
+Scan Claude Code, Cursor, and OpenCode data across your machine (not just the repo):
+
+```bash
+# Discover locations
+memorymesh scan
+
+# Ingest all provider messages
+memorymesh pull -p myproject
+
+# Build portable package for another machine/provider
+memorymesh package build -p myproject -o ./udata.tar.gz
+
+# Import on another machine
+memorymesh package import ./udata.tar.gz -p myproject
+```
+
+See [docs/U_DATA_PACKAGING.md](docs/U_DATA_PACKAGING.md) and [docs/STORAGE_PATHS.md](docs/STORAGE_PATHS.md).
+
+## Export chat & memory
+
+Export everything for a project (messages, summaries, agent state) as plain text, Markdown, or JSON:
+
+```bash
+memorymesh export -p myproject --format md -o ./export.md
+memorymesh export -p myproject --format txt --clipboard
+memorymesh export -p myproject --format json --provider cursor
+```
+
+The TUI (`memorymesh tui`) adds **[7] Export**. The HTTP API accepts `POST /export` with `{"project":"...", "format":"md", "clipboard": true}`.
+
+## Cross-provider chat transfer
+
+Move a conversation from one tool to another without dumping the whole project:
+
+```bash
+memorymesh init
+
+# Workspace Session Bridge — auto-picks the latest session for this cwd
+memorymesh resume -p lighthouse --from claude --to cursor -w ~/lighthouse
+
+# Or target any provider pair dynamically
+memorymesh resume -p myrepo --from claude --to gemini
+
+# Manual conversation filter still supported
+memorymesh transfer -p lighthouse --from claude --to cursor -c e7fcaea3 --push
+```
+
+**How it works (novel bits):**
+- Correlates sessions by **workspace slug** (`~/.claude/projects/-home-user-repo/` ↔ workspace path)
+- Builds a **resume brief** (compressed summary + tail turns) instead of 10k+ message dumps
+- Delivers via a **dynamic provider registry** — handoff paths and import hints resolve per target, with a generic fallback for unknown agents
+
+See [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) for `transfer`, `transfer-deliver`, and `install-push`.
 
 ## TUI
 

@@ -696,6 +696,27 @@ def render_aider_wrapper(
     return wrapper, body
 
 
+def install_push_script(target: str) -> Path:
+    key = target.strip().lower()
+    bin_dir = Path.home() / ".local" / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    script = bin_dir / f"memorymesh-push-{key}"
+    script_body = f"""#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "$#" -lt 1 ]; then
+  echo "usage: {script.name} <transfer_bundle.json>" >&2
+  exit 1
+fi
+
+FILE_PATH="$1"
+exec python3 -m deepiri_memorymesh.cli transfer-deliver --bundle "$FILE_PATH" --to {key}
+"""
+    script.write_text(script_body, encoding="utf-8")
+    script.chmod(0o755)
+    return script
+
+
 def install_native_integration(
     target: str,
     project: str,
@@ -710,6 +731,7 @@ def install_native_integration(
         )
 
     created: list[Path] = []
+    created.append(install_push_script(key))
 
     # OpenCode: native SDK plugin only (no unused transcript bridge/hook).
     if key == "opencode":

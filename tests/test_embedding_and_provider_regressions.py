@@ -161,7 +161,10 @@ class EmbeddingFallbackStatusTests(unittest.TestCase):
         warn_files = [
             w.filename for w in caught if issubclass(w.category, UserWarning)
         ]
-        self.assertTrue(any("test_batch3_fixes" in f for f in warn_files), warn_files)
+        self.assertTrue(
+            any("test_embedding_and_provider_regressions" in f for f in warn_files),
+            warn_files,
+        )
         status = emb.status()
         self.assertEqual(status.requested_backend, "sentence-transformers")
         self.assertEqual(status.active_backend, "fallback")
