@@ -943,11 +943,11 @@ class HookBridgeTransferFailureTests(unittest.TestCase):
                 )
             ]
         )
-        secret = "SECRET_TRANSCRIPT_BODY_" + ("x" * 5000)
+        marker = "REDACT_TEST_BODY_" + ("x" * 5000)
         bridge = self.bin_dir / "memorymesh-bridge-cursor"
         bridge.write_text(
             "#!/usr/bin/env bash\n"
-            f"printf '%s\\n' 'line1' '{secret}' $'ctl\\x01\\x02chars' 'tail' >&2\n"
+            f"printf '%s\\n' 'line1' '{marker}' $'ctl\\x01\\x02chars' 'tail' >&2\n"
             "exit 9\n",
             encoding="utf-8",
         )
@@ -960,18 +960,18 @@ class HookBridgeTransferFailureTests(unittest.TestCase):
         self.assertEqual(push.returncode, 9)
         self.assertLessEqual(len(push.message), 170)
         self.assertEqual(push.message, "tail")
-        self.assertNotIn(secret, push.message)
-        self.assertNotIn("SECRET_TRANSCRIPT", push.message)
+        self.assertNotIn(marker, push.message)
+        self.assertNotIn("REDACT_TEST_BODY", push.message)
         self.assertNotIn("\x01", push.message)
         joined = "\n".join(cm.output)
-        self.assertNotIn(secret, joined)
+        self.assertNotIn(marker, joined)
         # Helper matches the same policy used for reports.
         long_line = "VISIBLE_PREFIX_" + ("y" * 1000)
-        sanitized = sanitize_bridge_diagnostic(secret + "\n" + long_line)
+        sanitized = sanitize_bridge_diagnostic(marker + "\n" + long_line)
         self.assertTrue(sanitized.startswith("VISIBLE_PREFIX_"))
         self.assertLessEqual(len(sanitized), 170)
         self.assertTrue(sanitized.endswith("..."))
-        self.assertNotIn(secret, sanitized)
+        self.assertNotIn(marker, sanitized)
 
     def test_transfer_reports_are_per_call_under_concurrency(self) -> None:
         db = self.home / "mesh-conc.db"

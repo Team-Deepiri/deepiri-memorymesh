@@ -148,6 +148,60 @@ def normalize_ingest_roots(
     return roots
 
 
+def _open_allowlisted_file(base: str, verified_rel: str) -> Path:
+    """
+    Walk from a trusted ``base`` to ``verified_rel`` using directory listings.
+
+    Each segment is matched against ``os.scandir`` names so filesystem probes
+    use OS-returned paths under the allowlisted root, not the raw caller string.
+    """
+    cur = base
+    parts = [p for p in verified_rel.split(os.sep) if p and p != "."]
+    if any(p == ".." for p in parts):
+        raise IngestPathError(403, "path_not_allowed", "file_path is outside allowed ingest roots")
+
+    for idx, part in enumerate(parts):
+        try:
+            with os.scandir(cur) as entries:
+                match = next((e for e in entries if e.name == part), None)
+        except FileNotFoundError as exc:
+            raise IngestPathError(404, "path_not_found", "Ingest file not found") from exc
+        except OSError as exc:
+            raise IngestPathError(400, "invalid_path", "Invalid file_path") from exc
+
+        if match is None:
+            raise IngestPathError(404, "path_not_found", "Ingest file not found")
+
+        is_last = idx == len(parts) - 1
+        try:
+            is_dir = match.is_dir(follow_symlinks=False)
+            is_file = match.is_file(follow_symlinks=False)
+        except OSError as exc:
+            raise IngestPathError(400, "invalid_path", "Invalid file_path") from exc
+
+        if is_last:
+            if not is_file:
+                raise IngestPathError(400, "invalid_path", "file_path must be a regular file")
+            # Re-resolve to reject symlink escapes after the listing match.
+            try:
+                resolved = os.path.realpath(match.path)
+            except OSError as exc:
+                raise IngestPathError(400, "invalid_path", "Invalid file_path") from exc
+            base_prefix = base if base.endswith(os.sep) else base + os.sep
+            if resolved != base and not resolved.startswith(base_prefix):
+                raise IngestPathError(
+                    403, "path_not_allowed", "file_path is outside allowed ingest roots"
+                )
+            return Path(resolved)
+
+        if not is_dir:
+            raise IngestPathError(400, "invalid_path", "file_path must be a regular file")
+        cur = match.path
+
+    # verified_rel empty → the root itself (never a regular file for ingest).
+    raise IngestPathError(400, "invalid_path", "file_path must be a regular file")
+
+
 def validate_ingest_file_path(file_path: str | Path, allowed_roots: list[Path]) -> Path:
     """
     Validate a caller-supplied ingest path against allowed roots.
@@ -209,24 +263,13 @@ def validate_ingest_file_path(file_path: str | Path, allowed_roots: list[Path]) 
         if resolved != base and not resolved.startswith(base_prefix):
             continue
 
-        # Rebuild from the trusted root + verified suffix so probes use the
-        # post-allowlist path only.
         if resolved == base:
-            safe = base
+            verified_rel = ""
         else:
             verified_rel = resolved[len(base_prefix) :]
             if not verified_rel or verified_rel == ".." or verified_rel.startswith(".." + os.sep):
                 continue
-            safe = os.path.normpath(os.path.join(base, verified_rel))
-            if safe != base and not safe.startswith(base_prefix):
-                continue
 
-        # codeql[py/path-injection]: path allowlisted against trusted realpath root
-        if not os.path.isfile(safe):
-            # codeql[py/path-injection]: path allowlisted against trusted realpath root
-            if not os.path.exists(safe):
-                raise IngestPathError(404, "path_not_found", "Ingest file not found")
-            raise IngestPathError(400, "invalid_path", "file_path must be a regular file")
-        return Path(safe)
+        return _open_allowlisted_file(base, verified_rel)
 
     raise IngestPathError(403, "path_not_allowed", "file_path is outside allowed ingest roots")
