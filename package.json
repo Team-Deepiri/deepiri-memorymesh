@@ -1,0 +1,8 @@
+{
+  "name": "deepiri-memorymesh-dev",
+  "private": true,
+  "description": "Pinned esbuild for OpenCode plugin runtime tests only",
+  "devDependencies": {
+    "esbuild": "0.25.5"
+  }
+}

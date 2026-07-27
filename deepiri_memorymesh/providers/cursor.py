@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
 from ..models import MemoryRecord, now_iso
 from .base import normalize_content, parse_generic_file, records_from_messages, safe_str
+
+logger = logging.getLogger(__name__)
 
 
 def _cursor_from_obj(data: dict[str, Any], file_path: Path) -> tuple[str, list[dict[str, Any]]]:
@@ -45,10 +48,20 @@ def parse_cursor_file(provider: str, project: str, file_path: Path) -> list[Memo
     raw = file_path.read_text(encoding="utf-8")
     if file_path.suffix.lower() == ".jsonl":
         msgs: list[dict[str, Any]] = []
-        for line in raw.splitlines():
+        for line_no, line in enumerate(raw.splitlines(), start=1):
             if not line.strip():
                 continue
-            item = json.loads(line)
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError as exc:
+                # Do not log line content; it may include sensitive chat text.
+                logger.warning(
+                    "Skipping malformed Cursor JSONL line %s in %s: %s",
+                    line_no,
+                    file_path,
+                    exc.msg,
+                )
+                continue
             if not isinstance(item, dict):
                 continue
             role = safe_str(item.get("role") or item.get("type") or item.get("author"), "unknown")

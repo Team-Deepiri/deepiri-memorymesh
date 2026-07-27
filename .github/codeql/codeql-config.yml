@@ -1,4 +1,6 @@
 # Exclude generated/build/runtime artifact paths.
+# Test trees are ignored so intentional fixture payloads do not trip
+# clear-text / secret heuristics during PR differential analysis.
 paths-ignore:
   - '**/node_modules/**'
   - '**/dist/**'
@@ -11,3 +13,4 @@ paths-ignore:
   - '**/*.pyc'
   - '**/.mypy_cache/**'
   - '**/.pytest_cache/**'
+  - 'tests/**'

@@ -17,6 +17,10 @@ class MemoryRecord:
     content: str
     timestamp: str = field(default_factory=now_iso)
     metadata_json: str = "{}"
+    # Optional stable provider turn identity (T16/T20). NULL rows keep the
+    # content/timestamp unique index; non-NULL rows also use the partial unique
+    # index on (project, provider, conversation_id, source_key).
+    source_key: str | None = None
 
 
 @dataclass(slots=True)

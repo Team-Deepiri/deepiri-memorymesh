@@ -67,6 +67,24 @@ def _provider_steps(provider: str) -> str:
     return f"{provider}: bridge + transfer bundle path can be used for manual import."
 
 
+def _pick_provider(stdscr: curses.window, providers: list[str], title: str) -> str | None:
+    while True:
+        stdscr.clear()
+        stdscr.addstr(0, 0, title)
+        stdscr.addstr(1, 0, "Press number, or ESC to cancel:")
+        for idx, provider in enumerate(providers, start=1):
+            stdscr.addstr(2 + idx, 0, f"[{idx}] {provider}")
+        stdscr.refresh()
+        ch = stdscr.getch()
+        if ch == 27:  # ESC
+            return None
+        if ord("1") <= ch <= ord("9"):
+            choice = ch - ord("1")
+            if 0 <= choice < len(providers):
+                return providers[choice]
+
+
+
 def _export_project(stdscr: curses.window, mesh: MemoryMesh, project: str) -> tuple[str, str]:
     fmt = _readline(stdscr, "Format [md/txt/json] (md)> ") or "md"
     dest = _readline(stdscr, "Destination: file path, 'clipboard', or Enter for stdout> ")
@@ -95,23 +113,6 @@ def _export_project(stdscr: curses.window, mesh: MemoryMesh, project: str) -> tu
         return "Clipboard copy failed (install wl-copy/xclip/xsel)", ""
     preview = content[:400].replace("\n", " ")
     return "Export preview (stdout)", preview + ("…" if len(content) > 400 else "")
-
-
-def _pick_provider(stdscr: curses.window, providers: list[str], title: str) -> str | None:
-    while True:
-        stdscr.clear()
-        stdscr.addstr(0, 0, title)
-        stdscr.addstr(1, 0, "Press number, or ESC to cancel:")
-        for idx, provider in enumerate(providers, start=1):
-            stdscr.addstr(2 + idx, 0, f"[{idx}] {provider}")
-        stdscr.refresh()
-        ch = stdscr.getch()
-        if ch == 27:  # ESC
-            return None
-        if ord("1") <= ch <= ord("9"):
-            choice = ch - ord("1")
-            if 0 <= choice < len(providers):
-                return providers[choice]
 
 
 def run_tui(default_project: str = "deepiri") -> None:
@@ -145,7 +146,7 @@ def run_tui(default_project: str = "deepiri") -> None:
             ch = stdscr.getch()
             last_key = str(ch)
             if ch in (10, 13):  # Enter
-                status = "Press a menu key (1-7, p, q)."
+                status = "Press a menu key (1-6, p, q)."
                 detail = ""
                 continue
             if ch in (ord("q"), ord("Q")):
@@ -167,45 +168,37 @@ def run_tui(default_project: str = "deepiri") -> None:
                 stdscr.addstr(len(HELP) + 1, 0, status[:2000])
                 stdscr.addstr(len(HELP) + 2, 0, detail[:2000])
                 stdscr.refresh()
-                path, count, delivery = mesh.transfer(
+                path, count, push_report = mesh.transfer_with_report(
                     project=project,
                     from_provider=from_p,
                     to_provider=to_p,
                     out_path=None,
                     push_via_bridge=True,
                 )
-                status = f"Synced {count} message(s) {from_p}->{to_p}"
-                inbox = delivery.inbox_dir if delivery else path.parent
-                paste = delivery.context_md if delivery else path
-                detail = f"{_provider_steps(to_p)} | Paste: {paste} | Inbox: {inbox}"
+                if push_report.attempted and not push_report.success:
+                    status = f"Synced {count} message(s) {from_p}->{to_p} (push failed)"
+                    detail = f"{push_report.message} | Bundle: {path}"
+                else:
+                    status = f"Synced {count} message(s) {from_p}->{to_p}"
+                    detail = f"{_provider_steps(to_p)} | Bundle: {path}"
             elif ch == ord("2"):
                 status = "Running sync-auto... (this can take time)"
                 detail = "Scanning provider directories..."
                 stdscr.addstr(len(HELP) + 1, 0, status[:2000])
                 stdscr.addstr(len(HELP) + 2, 0, detail[:2000])
                 stdscr.refresh()
-                total_files = 0
-                total_messages = 0
-                for provider in settings.providers:
-                    source = settings.provider_paths.get(provider, "")
-                    if not source:
-                        continue
-                    from pathlib import Path
-
-                    p = Path(source).expanduser()
-                    if not p.exists() or not p.is_dir():
-                        continue
-                    globs = settings.provider_globs.get(provider, ["**/*.json", "**/*.jsonl"])
-                    processed, inserted = mesh.sync_directory(
-                        provider=provider,
-                        project=project,
-                        directory=p,
-                        recursive=True,
-                        include_globs=globs,
+                auto_report = mesh.sync_auto_report(project=project, recursive=True)
+                total_files = auto_report.total_processed
+                total_messages = auto_report.total_inserted
+                total_failed = auto_report.total_failed
+                skipped = auto_report.skipped_unsupported + auto_report.skipped_missing_path
+                if total_failed or skipped:
+                    status = (
+                        f"Sync done: files={total_files}, failed={total_failed}, "
+                        f"skipped={skipped}, messages={total_messages}"
                     )
-                    total_files += processed
-                    total_messages += inserted
-                status = f"Sync done: files={total_files}, messages={total_messages}"
+                else:
+                    status = f"Sync done: files={total_files}, messages={total_messages}"
                 detail = ""
             elif ch == ord("3"):
                 status = "Compressing conversations..."
@@ -243,6 +236,9 @@ def run_tui(default_project: str = "deepiri") -> None:
                     detail = str(rows[0]["content"]).replace("\n", " ")[:220]
             elif ch == ord("7"):
                 status, detail = _export_project(stdscr, mesh, project)
+                if detail:
+                    status = f"{status} — {detail}"
+
             elif ch in (ord("h"), ord("H")):
                 to_p = _pick_provider(stdscr, settings.providers[:9], "Provider steps for")
                 if not to_p:
@@ -260,7 +256,7 @@ def run_tui(default_project: str = "deepiri") -> None:
                     status = f"Project unchanged: {project}"
                 detail = ""
             else:
-                status = f"Unknown key code: {ch} (use 1-7, h, p, q)"
+                status = f"Unknown key code: {ch} (use 1-6, h, p, q)"
                 detail = ""
 
     curses.wrapper(_main)
