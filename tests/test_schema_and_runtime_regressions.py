@@ -623,7 +623,7 @@ class AiderParserTests(unittest.TestCase):
     def test_input_history_user_only(self) -> None:
         path = self.root / ".aider.input.history"
         path.write_text(
-            (FIXTURES / ".aider.input.history").read_text(encoding="utf-8"),
+            (FIXTURES / "aider.input.history").read_text(encoding="utf-8"),
             encoding="utf-8",
         )
         records, _ = parse_aider_input_history("aider", "proj", path)

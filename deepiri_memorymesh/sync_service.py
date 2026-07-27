@@ -179,6 +179,9 @@ class MemoryMesh:
             key_file=settings.encryption_key_file,
         )
         self.embedder = Embedder(settings.embedding_backend)
+        # Compatibility-only shared slots. Prefer per-call return values
+        # (``query_with_report``, transfer push reports). Never read these to
+        # attribute diagnostics across threads — concurrent callers race.
         self.last_query_report: QueryReport | None = None
         self.last_transfer_push: TransferPushReport | None = None
 

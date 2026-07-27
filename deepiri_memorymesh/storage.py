@@ -779,37 +779,65 @@ class MemoryStore:
         where = " AND ".join(clauses)
         params.append(limit)
         with self.connection() as conn:
+            # One round-trip: aggregate conversations and attach the latest user
+            # preview via a windowed subquery (avoids N+1 preview lookups).
             cur = conn.execute(
                 f"""
+                WITH ranked AS (
+                    SELECT
+                        conversation_id,
+                        provider,
+                        COUNT(*) AS message_count,
+                        MAX(timestamp) AS last_timestamp
+                    FROM memory_messages
+                    WHERE {where}
+                    GROUP BY provider, conversation_id
+                    ORDER BY last_timestamp DESC
+                    LIMIT ?
+                ),
+                previews AS (
+                    SELECT
+                        provider,
+                        conversation_id,
+                        id AS preview_id,
+                        content AS preview_content,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY provider, conversation_id
+                            ORDER BY timestamp DESC, id DESC
+                        ) AS rn
+                    FROM memory_messages
+                    WHERE project = ?
+                      AND role = 'user'
+                )
                 SELECT
-                    conversation_id,
-                    provider,
-                    COUNT(*) AS message_count,
-                    MAX(timestamp) AS last_timestamp
-                FROM memory_messages
-                WHERE {where}
-                GROUP BY provider, conversation_id
-                ORDER BY last_timestamp DESC
-                LIMIT ?
+                    ranked.conversation_id,
+                    ranked.provider,
+                    ranked.message_count,
+                    ranked.last_timestamp,
+                    previews.preview_id,
+                    previews.preview_content
+                FROM ranked
+                LEFT JOIN previews
+                  ON previews.provider = ranked.provider
+                 AND previews.conversation_id = ranked.conversation_id
+                 AND previews.rn = 1
+                ORDER BY ranked.last_timestamp DESC
                 """,
-                params,
+                [*params, project],
             )
-            rows = [dict(r) for r in cur.fetchall()]
-            for row in rows:
-                preview = conn.execute(
-                    """
-                    SELECT id, content FROM memory_messages
-                    WHERE project = ? AND provider = ? AND conversation_id = ? AND role = 'user'
-                    ORDER BY timestamp DESC, id DESC
-                    LIMIT 1
-                    """,
-                    (project, row["provider"], row["conversation_id"]),
-                ).fetchone()
-                if preview is None:
+            rows: list[dict] = []
+            for raw in cur.fetchall():
+                row = dict(raw)
+                preview_id = row.pop("preview_id", None)
+                preview_content = row.pop("preview_content", None)
+                if preview_id is None or preview_content is None:
                     row["last_user_preview"] = ""
                 else:
-                    unsealed = self._unseal_message_dict(preview)
+                    unsealed = self._unseal_message_dict(
+                        {"id": preview_id, "content": preview_content}
+                    )
                     row["last_user_preview"] = str(unsealed.get("content") or "")
+                rows.append(row)
             return rows
 
     def list_agent_state(self, project: str) -> list[dict]:

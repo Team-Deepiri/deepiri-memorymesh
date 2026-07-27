@@ -169,48 +169,64 @@ def validate_ingest_file_path(file_path: str | Path, allowed_roots: list[Path]) 
     if not allowed_roots:
         raise IngestPathError(403, "path_not_allowed", "No ingest roots configured")
 
-    # CodeQL-friendly pattern: join a trusted base with a relative segment, then
-    # startswith-check before any filesystem use of the combined path.
+    # Join a trusted realpath root with a relative segment, then startswith-check
+    # before any filesystem probe (CodeQL-recognized allowlist pattern).
+    soft = os.path.normpath(raw)
     for root in allowed_roots:
         try:
             base = os.path.realpath(os.path.expanduser(str(root)))
         except OSError:
             continue
         base_prefix = base if base.endswith(os.sep) else base + os.sep
-
-        soft_base = os.path.normpath(os.path.expanduser(str(root)))
-        soft_base_prefix = soft_base if soft_base.endswith(os.sep) else soft_base + os.sep
-        soft = os.path.normpath(raw)
+        soft_root = os.path.normpath(os.path.expanduser(str(root)))
+        soft_prefix = soft_root if soft_root.endswith(os.sep) else soft_root + os.sep
 
         if os.path.isabs(soft):
-            if soft == soft_base:
-                rel = ""
-            elif soft.startswith(soft_base_prefix):
-                rel = soft[len(soft_base_prefix) :]
-            elif soft == base:
+            # Prefer matching the caller path against the canonical root; also
+            # accept the pre-realpath root spelling so symlink roots still work.
+            if soft == base or soft == soft_root:
                 rel = ""
             elif soft.startswith(base_prefix):
                 rel = soft[len(base_prefix) :]
+            elif soft.startswith(soft_prefix):
+                rel = soft[len(soft_prefix) :]
             else:
                 continue
         else:
             rel = soft
 
-        if rel.startswith(".." + os.sep) or rel == "..":
+        if rel == ".." or rel.startswith(".." + os.sep) or f"{os.sep}..{os.sep}" in f"{os.sep}{rel}{os.sep}":
             continue
 
-        fullpath = os.path.normpath(os.path.join(base, rel))
-        if fullpath != base and not fullpath.startswith(base + os.sep):
+        joined = os.path.normpath(os.path.join(base, rel)) if rel else base
+        if joined != base and not joined.startswith(base_prefix):
             continue
-        fullpath = os.path.realpath(fullpath)
-        if fullpath != base and not fullpath.startswith(base + os.sep):
+
+        try:
+            resolved = os.path.realpath(joined)
+        except OSError:
             continue
-        # codeql[py/path-injection] constrained to trusted `base` by startswith above
-        if not os.path.isfile(fullpath):
-            # codeql[py/path-injection] constrained to trusted `base` by startswith above
-            if not os.path.exists(fullpath):
+        if resolved != base and not resolved.startswith(base_prefix):
+            continue
+
+        # Rebuild from the trusted root + verified suffix so probes use the
+        # post-allowlist path only.
+        if resolved == base:
+            safe = base
+        else:
+            verified_rel = resolved[len(base_prefix) :]
+            if not verified_rel or verified_rel == ".." or verified_rel.startswith(".." + os.sep):
+                continue
+            safe = os.path.normpath(os.path.join(base, verified_rel))
+            if safe != base and not safe.startswith(base_prefix):
+                continue
+
+        # codeql[py/path-injection]: path allowlisted against trusted realpath root
+        if not os.path.isfile(safe):
+            # codeql[py/path-injection]: path allowlisted against trusted realpath root
+            if not os.path.exists(safe):
                 raise IngestPathError(404, "path_not_found", "Ingest file not found")
             raise IngestPathError(400, "invalid_path", "file_path must be a regular file")
-        return Path(fullpath)
+        return Path(safe)
 
     raise IngestPathError(403, "path_not_allowed", "file_path is outside allowed ingest roots")
