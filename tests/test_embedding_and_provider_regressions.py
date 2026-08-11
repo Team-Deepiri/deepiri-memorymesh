@@ -254,6 +254,38 @@ class EmbeddingCompatibilityTests(unittest.TestCase):
     def tearDown(self) -> None:
         self._tmpdir.cleanup()
 
+    def test_hash_embedding_never_zero_vector(self) -> None:
+        """Sign-collision pairs and blank text must never yield an all-zero
+        vector: cosine rejects it, so such rows would be permanently
+        unretrievable and `embed --project` could never repair them."""
+        from deepiri_memorymesh.embeddings import _hash_embedding
+
+        # Real-world collision: both tokens map to the same bucket with
+        # opposing signs and cancel under the old implementation.
+        collision = "303:                keyframe_wanted,"
+        vec = _hash_embedding(collision)
+        self.assertGreater(sum(x * x for x in vec), 0.0)
+        self.assertAlmostEqual(sum(x * x for x in vec), 1.0)
+
+        for blank in ("", "   ", "\t\n"):
+            vec_blank = _hash_embedding(blank)
+            self.assertGreater(
+                sum(x * x for x in vec_blank),
+                0.0,
+                f"blank text {blank!r} produced an all-zero vector",
+            )
+            self.assertAlmostEqual(sum(x * x for x in vec_blank), 1.0)
+
+    def test_collision_text_still_retrievable_via_facade(self) -> None:
+        db_path = self.root / "hash.db"
+        mem = Memory(db_path=db_path, project="repro", embedder="fallback")
+        text = "303:                keyframe_wanted,"
+        mem.store(text)
+        mem.store("signaling relay 3478 stun wireguard udp")
+        results = mem.query("keyframe wireguard stun signaling", top_k=3)
+        self.assertIn(text, results)
+        self.assertEqual(len(results), 2)
+
     def test_versioned_fallback_round_trip(self) -> None:
         vec = [0.0] * 128
         vec[0] = 1.0

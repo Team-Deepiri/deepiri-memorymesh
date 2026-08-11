@@ -26,7 +26,16 @@ def _hash_embedding(text: str, dims: int = HASH_V1_DIMENSIONS) -> list[float]:
         idx = digest[0] % dims
         sign = 1.0 if (digest[1] % 2 == 0) else -1.0
         vec[idx] += sign
-    norm = math.sqrt(sum(v * v for v in vec)) or 1.0
+    norm = math.sqrt(sum(v * v for v in vec))
+    if norm == 0.0:
+        # Degenerate sign-collision case: tokens hashing into the same bucket
+        # with opposing signs (or empty/whitespace-only text) produce an
+        # all-zero vector, which cosine scoring rejects forever — the "re-embed
+        # to fix" hint can then never succeed. Assign a deterministic non-zero
+        # direction derived from the full text so the row stays retrievable.
+        digest = hashlib.sha256(text.encode("utf-8")).digest()
+        vec[digest[0] % dims] = 1.0 if (digest[1] % 2 == 0) else -1.0
+        norm = 1.0
     return [v / norm for v in vec]
 
 
