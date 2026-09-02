@@ -35,6 +35,7 @@ auth_app = typer.Typer(help="Manage HTTP bearer-token authentication (T37)")
 auth_token_app = typer.Typer(help="Create/list/revoke/rotate project-scoped tokens")
 pull_app = typer.Typer(help="Pull memory from device scan or token-gated external sources")
 encryption_app = typer.Typer(help="Optional encryption at rest (T33; requires memorymesh[security])")
+mesh_app = typer.Typer(help="Memory Mesh — cross-project search and chat discovery")
 app.add_typer(state_app, name="state")
 app.add_typer(bundle_app, name="bundle")
 app.add_typer(package_app, name="package")
@@ -45,6 +46,7 @@ app.add_typer(auth_app, name="auth")
 auth_app.add_typer(auth_token_app, name="token")
 app.add_typer(pull_app, name="pull")
 app.add_typer(encryption_app, name="encryption")
+app.add_typer(mesh_app, name="mesh")
 
 
 def _mesh() -> MemoryMesh:
@@ -1652,6 +1654,81 @@ def encryption_rotate(
     )
     if report.backup_path is not None:
         typer.echo(f"pre-rotate backup: {report.backup_path}")
+
+
+@mesh_app.command("search")
+def mesh_search(
+    q: str = typer.Option(..., help="Search text"),
+    top_k: int = typer.Option(10, min=1, max=50, help="Max results to return"),
+    project: str | None = typer.Option(
+        None, "-p", "--project", help="Scope to one project (omit for all)"
+    ),
+    provider: str | None = typer.Option(
+        None, "--provider", help="Filter by provider"
+    ),
+    role: str | None = typer.Option(
+        None, "--role", help="Filter by role (user/assistant)"
+    ),
+    mode: str = typer.Option(
+        "auto", help="Retrieval mode: exact | indexed | auto"
+    ),
+    candidate_limit: int | None = typer.Option(
+        None, help="Max lexical candidates (default from settings)"
+    ),
+) -> None:
+    """Search across all projects and providers in the memory mesh."""
+    mesh = _mesh()
+    result = mesh.mesh_search(
+        text=q,
+        top_k=top_k,
+        project=project,
+        provider=provider,
+        role=role,
+        strategy=mode,
+        candidate_limit=candidate_limit,
+    )
+    report = result.report
+    typer.echo(
+        f"strategy={report.strategy_used} "
+        f"eligible={report.total_eligible_embeddings} "
+        f"candidates={report.candidate_message_count} "
+        f"scored={report.embeddings_scored}",
+        err=True,
+    )
+    if report.exact_fallback_reason:
+        typer.echo(f"exact_fallback_reason={report.exact_fallback_reason}", err=True)
+    diag = result.diagnostic
+    if diag:
+        typer.echo(diag, err=True)
+    rows = result.rows
+    if not rows:
+        typer.echo("No results found.")
+        raise typer.Exit(0)
+    for i, row in enumerate(rows, start=1):
+        proj = row.get("project", "?")
+        typer.echo(
+            f"[{i}] score={row['score']:.4f} project={proj} "
+            f"provider={row['provider']} conv={row['conversation_id']}"
+        )
+        snippet = str(row["content"]).replace("\n", " ")
+        typer.echo(f"    {snippet[:220]}")
+
+
+@mesh_app.command("projects")
+def mesh_projects() -> None:
+    """List all project namespaces in the memory mesh."""
+    mesh = _mesh()
+    projects = mesh.list_projects()
+    if not projects:
+        typer.echo("No projects found.")
+        raise typer.Exit(0)
+    for proj in projects:
+        stats = mesh.stats(proj)
+        typer.echo(
+            f"{proj}  messages={stats['messages']} "
+            f"conversations={stats['conversations']} "
+            f"embeddings={stats['embeddings']}"
+        )
 
 
 if __name__ == "__main__":
