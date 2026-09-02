@@ -1774,6 +1774,8 @@ class MemoryStore:
                     conn.rollback()
                     raise
 
+        return with_busy_retry(_do)
+
     def rebuild_catalog(self, *, project: str | None = None) -> int:
         """Rebuild ``chat_catalog`` rows from ``memory_messages``.
 
