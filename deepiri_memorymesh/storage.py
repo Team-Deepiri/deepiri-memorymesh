@@ -1160,8 +1160,8 @@ class MemoryStore:
         with self.connection() as conn:
             cur = conn.execute(
                 """
-                SELECT m.id AS message_id, m.content, m.provider, m.conversation_id,
-                       e.id AS embedding_id, e.embedding_json
+                SELECT m.id AS message_id, m.content, m.provider, m.project,
+                       m.conversation_id, e.id AS embedding_id, e.embedding_json
                 FROM memory_embeddings e
                 JOIN memory_messages m ON e.message_id = m.id
                 WHERE m.project = ?
@@ -1200,7 +1200,7 @@ class MemoryStore:
             where = " AND ".join(filters)
             cur = conn.execute(
                 f"""
-                SELECT m.id AS message_id, m.content, m.provider,
+                SELECT m.id AS message_id, m.content, m.provider, m.project,
                        m.conversation_id, e.id AS embedding_id, e.embedding_json
                 FROM memory_embeddings e
                 JOIN memory_messages m ON e.message_id = m.id
@@ -1306,7 +1306,7 @@ class MemoryStore:
             if role is None:
                 cur = conn.execute(
                     """
-                    SELECT m.id AS message_id, m.content, m.provider,
+                    SELECT m.id AS message_id, m.content, m.provider, m.project,
                            m.conversation_id, e.id AS embedding_id, e.embedding_json
                     FROM memory_embeddings e
                     JOIN memory_messages m ON e.message_id = m.id
@@ -1318,7 +1318,7 @@ class MemoryStore:
             else:
                 cur = conn.execute(
                     """
-                    SELECT m.id AS message_id, m.content, m.provider,
+                    SELECT m.id AS message_id, m.content, m.provider, m.project,
                            m.conversation_id, e.id AS embedding_id, e.embedding_json
                     FROM memory_embeddings e
                     JOIN memory_messages m ON e.message_id = m.id
