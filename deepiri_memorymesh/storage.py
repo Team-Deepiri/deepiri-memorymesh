@@ -1329,6 +1329,149 @@ class MemoryStore:
                 )
             return [self._unseal_embedding_dict(r) for r in cur.fetchall()]
 
+    def list_all_projects(self) -> list[str]:
+        """Return distinct project namespaces in this database."""
+        with self.connection() as conn:
+            cur = conn.execute(
+                "SELECT DISTINCT project FROM memory_messages ORDER BY project ASC"
+            )
+            return [str(row["project"]) for row in cur.fetchall()]
+
+    def list_embeddings_cross_project(
+        self,
+        *,
+        provider: str | None = None,
+        role: str | None = None,
+    ) -> list[dict]:
+        """Fetch embeddings across all projects for mesh search."""
+        self.encryption_context()
+        clauses: list[str] = []
+        params: list[object] = []
+        if provider is not None:
+            clauses.append("m.provider = ?")
+            params.append(provider)
+        if role is not None:
+            clauses.append("m.role = ?")
+            params.append(role)
+        where = (" AND ".join(clauses)) if clauses else "1=1"
+        with self.connection() as conn:
+            cur = conn.execute(
+                f"""
+                SELECT m.id AS message_id, m.content, m.provider, m.project,
+                       m.conversation_id, e.id AS embedding_id, e.embedding_json
+                FROM memory_embeddings e
+                JOIN memory_messages m ON e.message_id = m.id
+                WHERE {where}
+                """,
+                params,
+            )
+            return [self._unseal_embedding_dict(r) for r in cur.fetchall()]
+
+    def list_embeddings_by_ids_cross_project(
+        self,
+        message_ids: list[int],
+        *,
+        provider: str | None = None,
+        role: str | None = None,
+    ) -> list[dict]:
+        """Fetch embeddings for candidate message ids across all projects."""
+        if not message_ids:
+            return []
+        self.encryption_context()
+        placeholders = ",".join("?" for _ in message_ids)
+        clauses = [f"m.id IN ({placeholders})"]
+        params: list[object] = list(message_ids)
+        if provider is not None:
+            clauses.append("m.provider = ?")
+            params.append(provider)
+        if role is not None:
+            clauses.append("m.role = ?")
+            params.append(role)
+        where = " AND ".join(clauses)
+        with self.connection() as conn:
+            cur = conn.execute(
+                f"""
+                SELECT m.id AS message_id, m.content, m.provider, m.project,
+                       m.conversation_id, e.id AS embedding_id, e.embedding_json
+                FROM memory_embeddings e
+                JOIN memory_messages m ON e.message_id = m.id
+                WHERE {where}
+                """,
+                params,
+            )
+            return [self._unseal_embedding_dict(r) for r in cur.fetchall()]
+
+    def count_embeddings_cross_project(
+        self,
+        *,
+        provider: str | None = None,
+        role: str | None = None,
+    ) -> int:
+        """Count eligible embeddings across all projects."""
+        with self.connection() as conn:
+            clauses: list[str] = []
+            params: list[object] = []
+            if provider is not None:
+                clauses.append("m.provider = ?")
+                params.append(provider)
+            if role is not None:
+                clauses.append("m.role = ?")
+                params.append(role)
+            where = (" AND ".join(clauses)) if clauses else "1=1"
+            row = conn.execute(
+                f"""
+                SELECT COUNT(*) AS c
+                FROM memory_embeddings e
+                JOIN memory_messages m ON e.message_id = m.id
+                WHERE {where}
+                """,
+                params,
+            ).fetchone()
+            return int(row["c"])
+
+    def select_candidate_message_ids_cross_project(
+        self,
+        *,
+        terms: list[str],
+        limit: int,
+        provider: str | None = None,
+        role: str | None = None,
+    ) -> list[int]:
+        """Rank message ids by term overlap across all projects."""
+        from .search_index import select_candidate_message_ids
+
+        if not terms or limit <= 0:
+            return []
+        self.encryption_context()
+        placeholders = ",".join("?" for _ in terms)
+        clauses = [f"t.term IN ({placeholders})"]
+        params: list[object] = list(terms)
+        if provider is not None:
+            clauses.append("m.provider = ?")
+            params.append(provider)
+        if role is not None:
+            clauses.append("m.role = ?")
+            params.append(role)
+        clauses.append(
+            "EXISTS (SELECT 1 FROM memory_embeddings e WHERE e.message_id = m.id)"
+        )
+        where = " AND ".join(clauses)
+        params.append(int(limit))
+        with self.connection() as conn:
+            cur = conn.execute(
+                f"""
+                SELECT t.message_id AS message_id, COUNT(DISTINCT t.term) AS overlap
+                FROM memory_message_terms t
+                JOIN memory_messages m ON m.id = t.message_id
+                WHERE {where}
+                GROUP BY t.message_id
+                ORDER BY overlap DESC, t.message_id ASC
+                LIMIT ?
+                """,
+                params,
+            )
+            return [int(r[0]) for r in cur.fetchall()]
+
     def insert_message_returning_id(self, rec: MemoryRecord) -> int | None:
         """Insert one message; return new id, or None if UNIQUE dedupe skipped it."""
 

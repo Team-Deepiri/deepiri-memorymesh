@@ -689,6 +689,167 @@ class MemoryMesh:
             )
         return QueryResult(rows=ranked, report=qreport)
 
+    def mesh_search(
+        self,
+        text: str,
+        top_k: int = 10,
+        *,
+        project: str | None = None,
+        provider: str | None = None,
+        role: str | None = None,
+        strategy: str | None = None,
+        candidate_limit: int | None = None,
+    ) -> QueryResult:
+        """Cross-project, cross-provider semantic search across the entire memory mesh.
+
+        When *project* is provided, results are scoped to that project.
+        Otherwise all projects are searched. Returns ranked results with
+        project/conversation metadata for each hit.
+        """
+        self.init()
+        requested = (strategy or self.settings.retrieval_mode or "auto").strip().lower()
+        if requested not in {"exact", "indexed", "auto"}:
+            raise ValueError(
+                f"Unsupported retrieval strategy: {strategy!r}. "
+                "Expected 'exact', 'indexed', or 'auto'."
+            )
+        limit = (
+            int(candidate_limit)
+            if candidate_limit is not None
+            else int(self.settings.retrieval_candidate_limit)
+        )
+        threshold = int(self.settings.retrieval_exact_threshold)
+
+        qvec = self.embedder.embed(text)
+        query_meta = query_embedding_meta(
+            qvec,
+            backend=self.embedder.backend,
+            model=self.embedder.model_id,
+        )
+
+        if project is not None:
+            total_eligible = self.store.count_embeddings(
+                project, provider=provider, role=role
+            )
+        else:
+            total_eligible = self.store.count_embeddings_cross_project(
+                provider=provider, role=role
+            )
+
+        qreport = QueryReport(
+            strategy_requested=requested,
+            candidate_limit=limit,
+            total_eligible_embeddings=total_eligible,
+        )
+
+        used = requested
+        fallback_reason: str | None = None
+        candidate_ids: list[int] | None = None
+
+        if requested == "auto":
+            if total_eligible <= threshold:
+                used = "exact"
+            else:
+                used = "indexed"
+
+        if used == "indexed":
+            terms = self.store.map_query_terms(tokenize_for_index(text))
+            if not terms:
+                if requested == "indexed":
+                    qreport.strategy_used = "indexed"
+                    qreport.exact_fallback_reason = (
+                        "no_lexical_candidates; use exact mode for full recall"
+                    )
+                    qreport.candidate_message_count = 0
+                    qreport.embeddings_scored = 0
+                    self.last_query_report = qreport
+                    return QueryResult(rows=[], report=qreport)
+                used = "exact"
+                fallback_reason = "empty_query_tokens"
+            else:
+                if project is not None:
+                    with self.store.connection() as conn:
+                        candidate_ids = select_candidate_message_ids(
+                            conn,
+                            terms=terms,
+                            limit=limit,
+                            project=project,
+                            provider=provider,
+                            role=role,
+                        )
+                else:
+                    candidate_ids = self.store.select_candidate_message_ids_cross_project(
+                        terms=terms,
+                        limit=limit,
+                        provider=provider,
+                        role=role,
+                    )
+                if not candidate_ids:
+                    if requested == "indexed":
+                        qreport.strategy_used = "indexed"
+                        qreport.exact_fallback_reason = (
+                            "no_lexical_candidates; use exact mode for full recall"
+                        )
+                        qreport.candidate_message_count = 0
+                        qreport.embeddings_scored = 0
+                        self.last_query_report = qreport
+                        return QueryResult(rows=[], report=qreport)
+                    used = "exact"
+                    fallback_reason = "no_lexical_candidates"
+
+        qreport.strategy_used = used
+        qreport.exact_fallback_reason = fallback_reason
+
+        if used == "exact":
+            if project is not None:
+                rows = [dict(r) for r in self.store.list_embeddings(project)]
+                if provider is not None:
+                    rows = [r for r in rows if r.get("provider") == provider]
+                if role is not None:
+                    rows = [r for r in rows if r.get("role") == role]
+            else:
+                rows = [
+                    dict(r)
+                    for r in self.store.list_embeddings_cross_project(
+                        provider=provider, role=role
+                    )
+                ]
+        else:
+            assert candidate_ids is not None
+            if project is not None:
+                rows = [
+                    dict(r)
+                    for r in self.store.list_embeddings_by_ids(
+                        candidate_ids,
+                        project=project,
+                        provider=provider,
+                        role=role,
+                    )
+                ]
+            else:
+                rows = [
+                    dict(r)
+                    for r in self.store.list_embeddings_by_ids_cross_project(
+                        candidate_ids,
+                        provider=provider,
+                        role=role,
+                    )
+                ]
+
+        qreport.candidate_message_count = len(rows)
+        ranked, rank = rank_rows_with_report(
+            qvec, rows, top_k=top_k, query_meta=query_meta
+        )
+        qreport.rank = rank
+        qreport.embeddings_scored = rank.scored + rank.skipped
+        self.last_query_report = qreport
+        return QueryResult(rows=ranked, report=qreport)
+
+    def list_projects(self) -> list[str]:
+        """Return all project namespaces in the database."""
+        self.init()
+        return self.store.list_all_projects()
+
     def sync_auto_report(
         self,
         project: str,
