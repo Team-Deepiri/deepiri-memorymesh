@@ -175,6 +175,14 @@ class MemoryMeshHandler(BaseHTTPRequestHandler):
                 self._require_scope(project, "read")
                 self._send(HTTPStatus.OK, {"ok": True, "stats": self.mesh.stats(project)})
                 return
+            if self.path == "/mesh/projects":
+                projects = self.mesh.list_projects()
+                result = []
+                for proj in projects:
+                    s = self.mesh.stats(proj)
+                    result.append({"project": proj, **s})
+                self._send(HTTPStatus.OK, {"ok": True, "projects": result})
+                return
             self._send(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"})
         except HttpApiError as exc:
             self._send(exc.status, exc.payload())
@@ -283,6 +291,46 @@ class MemoryMeshHandler(BaseHTTPRequestHandler):
                     key=str(body.get("key") or ""),
                 )
                 self._send(HTTPStatus.OK, {"ok": True, "value": value})
+                return
+
+            if self.path == "/mesh/search":
+                text = str(body.get("q") or "")
+                if not text:
+                    raise HttpApiError(
+                        HTTPStatus.BAD_REQUEST,
+                        "missing_query",
+                        "Field 'q' is required",
+                    )
+                project = body.get("project")
+                provider = body.get("provider")
+                role = body.get("role")
+                top_k = int(body.get("top_k") or 10)
+                strategy = body.get("strategy") or body.get("mode")
+                candidate_limit = body.get("candidate_limit")
+                result = self.mesh.mesh_search(
+                    text=text,
+                    top_k=top_k,
+                    project=str(project) if project is not None else None,
+                    provider=str(provider) if provider is not None else None,
+                    role=str(role) if role is not None else None,
+                    strategy=str(strategy) if strategy is not None else None,
+                    candidate_limit=int(candidate_limit) if candidate_limit is not None else None,
+                )
+                report = result.report
+                payload = {
+                    "ok": True,
+                    "results": result.rows,
+                    "strategy_requested": report.strategy_requested,
+                    "strategy_used": report.strategy_used,
+                    "total_eligible_embeddings": report.total_eligible_embeddings,
+                    "candidate_message_count": report.candidate_message_count,
+                    "embeddings_scored": report.embeddings_scored,
+                }
+                if report.exact_fallback_reason:
+                    payload["exact_fallback_reason"] = report.exact_fallback_reason
+                if result.diagnostic:
+                    payload["diagnostic"] = result.diagnostic
+                self._send(HTTPStatus.OK, payload)
                 return
 
             self._send(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"})
