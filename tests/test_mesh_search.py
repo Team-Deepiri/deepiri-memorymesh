@@ -219,6 +219,69 @@ class TestMeshSearchHttpApi:
             svc.shutdown()
 
 
+class TestMeshSearchHttpAuth:
+    def test_mesh_endpoints_denied_without_project_when_auth_on(self, tmp_path: Path) -> None:
+        import json
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        from urllib import error as urlerror
+        from urllib import request as urlrequest
+        from deepiri_memorymesh import auth
+        from deepiri_memorymesh.supervised_service import SupervisedService
+
+        settings = _make_settings(tmp_path)
+        mesh = MemoryMesh(settings)
+        _seed_project(mesh, "proj-1", "claude", ["Hello world search test"])
+        mesh.embed_project("proj-1")
+        plaintext, _record = auth.create_token(settings.db_path, "proj-1", ["read"])
+
+        probe = ThreadingHTTPServer(("127.0.0.1", 0), BaseHTTPRequestHandler)
+        port = probe.server_address[1]
+        probe.server_close()
+
+        svc = SupervisedService(
+            host="127.0.0.1", port=port, settings=settings, auth_mode="required"
+        )
+        assert svc.start() == "started"
+        base_url = f"http://127.0.0.1:{port}"
+
+        try:
+            # No project filter -> denied even with a valid token, since a
+            # project-scoped token cannot prove access to every project.
+            req = urlrequest.Request(base_url + "/mesh/projects", method="GET")
+            req.add_header("Authorization", f"Bearer {plaintext}")
+            with pytest.raises(urlerror.HTTPError) as exc_info:
+                urlrequest.urlopen(req, timeout=5)
+            assert exc_info.value.code == 403
+
+            # /mesh/find with a project filter matching the token succeeds.
+            req = urlrequest.Request(
+                base_url + "/mesh/find?project=proj-1", method="GET"
+            )
+            req.add_header("Authorization", f"Bearer {plaintext}")
+            with urlrequest.urlopen(req, timeout=5) as resp:
+                status = resp.status
+            assert status == 200
+
+            # /mesh/search with a project the token cannot read is denied.
+            post_data = json.dumps({"q": "hello", "project": "other-proj"}).encode(
+                "utf-8"
+            )
+            req = urlrequest.Request(
+                base_url + "/mesh/search",
+                data=post_data,
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {plaintext}",
+                },
+                method="POST",
+            )
+            with pytest.raises(urlerror.HTTPError) as exc_info:
+                urlrequest.urlopen(req, timeout=5)
+            assert exc_info.value.code in (401, 403)
+        finally:
+            svc.shutdown()
+
+
 class TestMeshSearchCli:
     def test_cli_mesh_projects_and_search(self, tmp_path: Path) -> None:
         from unittest import mock

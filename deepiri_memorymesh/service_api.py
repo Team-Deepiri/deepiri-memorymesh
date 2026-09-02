@@ -139,6 +139,28 @@ class MemoryMeshHandler(BaseHTTPRequestHandler):
         if not result.ok:
             raise HttpApiError(result.status, result.error or "unauthorized", result.message or "Unauthorized")
 
+    def _require_mesh_scope(self, project: str | None, required_scope: str = "read") -> None:
+        """Enforce bearer auth for a cross-project mesh endpoint.
+
+        Bearer tokens are scoped to a single project (see :func:`verify_bearer`),
+        so a mesh endpoint spanning all projects cannot honor a token that
+        proves access to only one. When *project* is given, the request is
+        authorized the same way as any other project-scoped endpoint. When
+        *project* is omitted (i.e. the request spans every project), no token
+        can prove that scope, so the request is denied outright once auth is
+        enabled — matching the default-deny posture of every other endpoint.
+        """
+        if self.auth_mode == "off":
+            return
+        if project is not None:
+            self._require_scope(project, required_scope)
+            return
+        raise HttpApiError(
+            HTTPStatus.FORBIDDEN,
+            "scope_required",
+            "Cross-project mesh queries require a 'project' filter when auth is enabled",
+        )
+
     def do_GET(self) -> None:  # noqa: N802
         try:
             if self.path == "/health":
@@ -177,6 +199,7 @@ class MemoryMeshHandler(BaseHTTPRequestHandler):
                 self._send(HTTPStatus.OK, {"ok": True, "stats": self.mesh.stats(project)})
                 return
             if self.path == "/mesh/projects":
+                self._require_mesh_scope(None)
                 projects = self.mesh.list_projects()
                 result = []
                 for proj in projects:
@@ -192,6 +215,7 @@ class MemoryMeshHandler(BaseHTTPRequestHandler):
                         key, val = part.split("=", 1)
                         params[key] = unquote(val)
                 limit_raw = params.get("limit")
+                self._require_mesh_scope(params.get("project"))
                 rows = self.mesh.find_conversations(
                     project=params.get("project"),
                     provider=params.get("provider"),
@@ -201,6 +225,7 @@ class MemoryMeshHandler(BaseHTTPRequestHandler):
                 self._send(HTTPStatus.OK, {"ok": True, "conversations": rows})
                 return
             if self.path == "/mesh/catalog":
+                self._require_mesh_scope(None)
                 self._send(HTTPStatus.OK, {"ok": True, "stats": self.mesh.catalog_stats()})
                 return
             self._send(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"})
@@ -327,6 +352,7 @@ class MemoryMeshHandler(BaseHTTPRequestHandler):
                 top_k = int(body.get("top_k") or 10)
                 strategy = body.get("strategy") or body.get("mode")
                 candidate_limit = body.get("candidate_limit")
+                self._require_mesh_scope(str(project) if project is not None else None)
                 result = self.mesh.mesh_search(
                     text=text,
                     top_k=top_k,
