@@ -7,6 +7,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote
 
 from .auth import verify_bearer
 from .config import Settings
@@ -138,6 +139,28 @@ class MemoryMeshHandler(BaseHTTPRequestHandler):
         if not result.ok:
             raise HttpApiError(result.status, result.error or "unauthorized", result.message or "Unauthorized")
 
+    def _require_mesh_scope(self, project: str | None, required_scope: str = "read") -> None:
+        """Enforce bearer auth for a cross-project mesh endpoint.
+
+        Bearer tokens are scoped to a single project (see :func:`verify_bearer`),
+        so a mesh endpoint spanning all projects cannot honor a token that
+        proves access to only one. When *project* is given, the request is
+        authorized the same way as any other project-scoped endpoint. When
+        *project* is omitted (i.e. the request spans every project), no token
+        can prove that scope, so the request is denied outright once auth is
+        enabled — matching the default-deny posture of every other endpoint.
+        """
+        if self.auth_mode == "off":
+            return
+        if project is not None:
+            self._require_scope(project, required_scope)
+            return
+        raise HttpApiError(
+            HTTPStatus.FORBIDDEN,
+            "scope_required",
+            "Cross-project mesh queries require a 'project' filter when auth is enabled",
+        )
+
     def do_GET(self) -> None:  # noqa: N802
         try:
             if self.path == "/health":
@@ -174,6 +197,36 @@ class MemoryMeshHandler(BaseHTTPRequestHandler):
                         project = part.split("=", 1)[1] or "default"
                 self._require_scope(project, "read")
                 self._send(HTTPStatus.OK, {"ok": True, "stats": self.mesh.stats(project)})
+                return
+            if self.path == "/mesh/projects":
+                self._require_mesh_scope(None)
+                projects = self.mesh.list_projects()
+                result = []
+                for proj in projects:
+                    s = self.mesh.stats(proj)
+                    result.append({"project": proj, **s})
+                self._send(HTTPStatus.OK, {"ok": True, "projects": result})
+                return
+            if self.path.startswith("/mesh/find"):
+                qs = self.path.split("?", 1)[1] if "?" in self.path else ""
+                params: dict[str, str] = {}
+                for part in qs.split("&"):
+                    if "=" in part:
+                        key, val = part.split("=", 1)
+                        params[key] = unquote(val)
+                limit_raw = params.get("limit")
+                self._require_mesh_scope(params.get("project"))
+                rows = self.mesh.find_conversations(
+                    project=params.get("project"),
+                    provider=params.get("provider"),
+                    query=params.get("q"),
+                    limit=int(limit_raw) if limit_raw else 50,
+                )
+                self._send(HTTPStatus.OK, {"ok": True, "conversations": rows})
+                return
+            if self.path == "/mesh/catalog":
+                self._require_mesh_scope(None)
+                self._send(HTTPStatus.OK, {"ok": True, "stats": self.mesh.catalog_stats()})
                 return
             self._send(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"})
         except HttpApiError as exc:
@@ -283,6 +336,47 @@ class MemoryMeshHandler(BaseHTTPRequestHandler):
                     key=str(body.get("key") or ""),
                 )
                 self._send(HTTPStatus.OK, {"ok": True, "value": value})
+                return
+
+            if self.path == "/mesh/search":
+                text = str(body.get("q") or "")
+                if not text:
+                    raise HttpApiError(
+                        HTTPStatus.BAD_REQUEST,
+                        "missing_query",
+                        "Field 'q' is required",
+                    )
+                project = body.get("project")
+                provider = body.get("provider")
+                role = body.get("role")
+                top_k = int(body.get("top_k") or 10)
+                strategy = body.get("strategy") or body.get("mode")
+                candidate_limit = body.get("candidate_limit")
+                self._require_mesh_scope(str(project) if project is not None else None)
+                result = self.mesh.mesh_search(
+                    text=text,
+                    top_k=top_k,
+                    project=str(project) if project is not None else None,
+                    provider=str(provider) if provider is not None else None,
+                    role=str(role) if role is not None else None,
+                    strategy=str(strategy) if strategy is not None else None,
+                    candidate_limit=int(candidate_limit) if candidate_limit is not None else None,
+                )
+                report = result.report
+                payload = {
+                    "ok": True,
+                    "results": result.rows,
+                    "strategy_requested": report.strategy_requested,
+                    "strategy_used": report.strategy_used,
+                    "total_eligible_embeddings": report.total_eligible_embeddings,
+                    "candidate_message_count": report.candidate_message_count,
+                    "embeddings_scored": report.embeddings_scored,
+                }
+                if report.exact_fallback_reason:
+                    payload["exact_fallback_reason"] = report.exact_fallback_reason
+                if result.diagnostic:
+                    payload["diagnostic"] = result.diagnostic
+                self._send(HTTPStatus.OK, payload)
                 return
 
             self._send(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"})

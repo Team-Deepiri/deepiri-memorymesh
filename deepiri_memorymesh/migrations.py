@@ -344,6 +344,38 @@ def _migrate_v6_api_pull_state(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_v7_chat_catalog(conn: sqlite3.Connection) -> None:
+    """Add ``chat_catalog`` — a denormalized index of conversations for fast discovery."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS chat_catalog (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            conversation_id TEXT NOT NULL,
+            title TEXT,
+            message_count INTEGER NOT NULL DEFAULT 0,
+            first_message_at TEXT,
+            last_message_at TEXT,
+            updated_at TEXT NOT NULL,
+            UNIQUE(project, provider, conversation_id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS ix_chat_catalog_project
+        ON chat_catalog (project)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS ix_chat_catalog_provider
+        ON chat_catalog (provider)
+        """
+    )
+
+
 MIGRATIONS: list[Migration] = [
     Migration(1, "baseline_platform_schema", _migrate_v1_baseline),
     Migration(2, "message_source_key", _migrate_v2_source_key),
@@ -351,6 +383,7 @@ MIGRATIONS: list[Migration] = [
     Migration(4, "encryption_security_metadata", _migrate_v4_encryption_security_metadata),
     Migration(5, "project_http_tokens", _migrate_v5_project_http_tokens),
     Migration(6, "api_pull_state", _migrate_v6_api_pull_state),
+    Migration(7, "chat_catalog", _migrate_v7_chat_catalog),
 ]
 
 CURRENT_SCHEMA_VERSION = MIGRATIONS[-1].version
