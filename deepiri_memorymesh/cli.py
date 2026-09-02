@@ -1731,5 +1731,46 @@ def mesh_projects() -> None:
         )
 
 
+@mesh_app.command("index")
+def mesh_index(
+    project: str | None = typer.Option(
+        None, "-p", "--project", help="Scope indexing to one project (omit for all)"
+    ),
+) -> None:
+    """Rebuild the chat catalog from stored messages."""
+    mesh = _mesh()
+    count = mesh.index_catalog(project=project)
+    typer.echo(f"Indexed {count} conversation(s).")
+
+
+@mesh_app.command("find")
+def mesh_find(
+    project: str | None = typer.Option(
+        None, "-p", "--project", help="Filter by project"
+    ),
+    provider: str | None = typer.Option(
+        None, "--provider", help="Filter by provider"
+    ),
+    q: str | None = typer.Option(
+        None, "--q", help="Filter by title substring"
+    ),
+    limit: int = typer.Option(50, min=1, max=500, help="Max conversations to return"),
+) -> None:
+    """Find conversations in the chat catalog."""
+    mesh = _mesh()
+    rows = mesh.find_conversations(project=project, provider=provider, query=q, limit=limit)
+    if not rows:
+        typer.echo("No conversations found.")
+        raise typer.Exit(0)
+    for row in rows:
+        typer.echo(
+            f"project={row['project']} provider={row['provider']} "
+            f"conv={row['conversation_id']} messages={row['message_count']} "
+            f"last={row['last_message_at']}"
+        )
+        if row.get("title"):
+            typer.echo(f"    {row['title']}")
+
+
 if __name__ == "__main__":
     app()

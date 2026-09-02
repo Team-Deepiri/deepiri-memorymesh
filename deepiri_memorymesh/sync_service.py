@@ -850,6 +850,30 @@ class MemoryMesh:
         self.init()
         return self.store.list_all_projects()
 
+    def index_catalog(self, *, project: str | None = None) -> int:
+        """Rebuild the chat catalog from stored messages. Returns conversations indexed."""
+        self.init()
+        return self.store.rebuild_catalog(project=project)
+
+    def find_conversations(
+        self,
+        *,
+        project: str | None = None,
+        provider: str | None = None,
+        query: str | None = None,
+        limit: int = 50,
+    ) -> list[dict]:
+        """Query the chat catalog for matching conversations."""
+        self.init()
+        return self.store.find_catalog(
+            project=project, provider=provider, query=query, limit=limit
+        )
+
+    def catalog_stats(self) -> dict[str, int]:
+        """Return aggregate chat catalog stats."""
+        self.init()
+        return self.store.catalog_stats()
+
     def sync_auto_report(
         self,
         project: str,
