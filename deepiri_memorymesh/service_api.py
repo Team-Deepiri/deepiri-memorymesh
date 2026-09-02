@@ -7,6 +7,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote
 
 from .auth import verify_bearer
 from .config import Settings
@@ -182,6 +183,25 @@ class MemoryMeshHandler(BaseHTTPRequestHandler):
                     s = self.mesh.stats(proj)
                     result.append({"project": proj, **s})
                 self._send(HTTPStatus.OK, {"ok": True, "projects": result})
+                return
+            if self.path.startswith("/mesh/find"):
+                qs = self.path.split("?", 1)[1] if "?" in self.path else ""
+                params: dict[str, str] = {}
+                for part in qs.split("&"):
+                    if "=" in part:
+                        key, val = part.split("=", 1)
+                        params[key] = unquote(val)
+                limit_raw = params.get("limit")
+                rows = self.mesh.find_conversations(
+                    project=params.get("project"),
+                    provider=params.get("provider"),
+                    query=params.get("q"),
+                    limit=int(limit_raw) if limit_raw else 50,
+                )
+                self._send(HTTPStatus.OK, {"ok": True, "conversations": rows})
+                return
+            if self.path == "/mesh/catalog":
+                self._send(HTTPStatus.OK, {"ok": True, "stats": self.mesh.catalog_stats()})
                 return
             self._send(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"})
         except HttpApiError as exc:
