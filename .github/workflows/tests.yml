@@ -4,13 +4,22 @@
 name: Tests
 
 on:
-  push:
-    branches: [main, master]
   pull_request:
+    branches: [main, dev]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '.gitignore'
+      - 'LICENSE*'
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
+    timeout-minutes: 20
     name: Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
     strategy:
@@ -91,6 +100,7 @@ jobs:
           esac
 
   security:
+    timeout-minutes: 20
     name: Security extra (Python 3.12)
     runs-on: ubuntu-latest
     steps:
