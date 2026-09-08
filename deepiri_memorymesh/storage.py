@@ -6,6 +6,7 @@ import sqlite3
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator, Iterable, Literal
 
@@ -26,6 +27,10 @@ BUSY_RETRY_ATTEMPTS = 8
 BUSY_RETRY_BASE_DELAY_S = 0.02
 
 SchemaKind = Literal["empty", "platform", "legacy", "unknown", "corrupt"]
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def sqlite_readonly_uri(path: Path) -> str:
@@ -1160,8 +1165,8 @@ class MemoryStore:
         with self.connection() as conn:
             cur = conn.execute(
                 """
-                SELECT m.id AS message_id, m.content, m.provider, m.conversation_id,
-                       e.id AS embedding_id, e.embedding_json
+                SELECT m.id AS message_id, m.content, m.provider, m.project,
+                       m.conversation_id, e.id AS embedding_id, e.embedding_json
                 FROM memory_embeddings e
                 JOIN memory_messages m ON e.message_id = m.id
                 WHERE m.project = ?
@@ -1200,7 +1205,7 @@ class MemoryStore:
             where = " AND ".join(filters)
             cur = conn.execute(
                 f"""
-                SELECT m.id AS message_id, m.content, m.provider,
+                SELECT m.id AS message_id, m.content, m.provider, m.project,
                        m.conversation_id, e.id AS embedding_id, e.embedding_json
                 FROM memory_embeddings e
                 JOIN memory_messages m ON e.message_id = m.id
@@ -1306,7 +1311,7 @@ class MemoryStore:
             if role is None:
                 cur = conn.execute(
                     """
-                    SELECT m.id AS message_id, m.content, m.provider,
+                    SELECT m.id AS message_id, m.content, m.provider, m.project,
                            m.conversation_id, e.id AS embedding_id, e.embedding_json
                     FROM memory_embeddings e
                     JOIN memory_messages m ON e.message_id = m.id
@@ -1318,7 +1323,7 @@ class MemoryStore:
             else:
                 cur = conn.execute(
                     """
-                    SELECT m.id AS message_id, m.content, m.provider,
+                    SELECT m.id AS message_id, m.content, m.provider, m.project,
                            m.conversation_id, e.id AS embedding_id, e.embedding_json
                     FROM memory_embeddings e
                     JOIN memory_messages m ON e.message_id = m.id
@@ -1328,6 +1333,149 @@ class MemoryStore:
                     (project, provider, conversation_id, role),
                 )
             return [self._unseal_embedding_dict(r) for r in cur.fetchall()]
+
+    def list_all_projects(self) -> list[str]:
+        """Return distinct project namespaces in this database."""
+        with self.connection() as conn:
+            cur = conn.execute(
+                "SELECT DISTINCT project FROM memory_messages ORDER BY project ASC"
+            )
+            return [str(row["project"]) for row in cur.fetchall()]
+
+    def list_embeddings_cross_project(
+        self,
+        *,
+        provider: str | None = None,
+        role: str | None = None,
+    ) -> list[dict]:
+        """Fetch embeddings across all projects for mesh search."""
+        self.encryption_context()
+        clauses: list[str] = []
+        params: list[object] = []
+        if provider is not None:
+            clauses.append("m.provider = ?")
+            params.append(provider)
+        if role is not None:
+            clauses.append("m.role = ?")
+            params.append(role)
+        where = (" AND ".join(clauses)) if clauses else "1=1"
+        with self.connection() as conn:
+            cur = conn.execute(
+                f"""
+                SELECT m.id AS message_id, m.content, m.provider, m.project,
+                       m.conversation_id, e.id AS embedding_id, e.embedding_json
+                FROM memory_embeddings e
+                JOIN memory_messages m ON e.message_id = m.id
+                WHERE {where}
+                """,
+                params,
+            )
+            return [self._unseal_embedding_dict(r) for r in cur.fetchall()]
+
+    def list_embeddings_by_ids_cross_project(
+        self,
+        message_ids: list[int],
+        *,
+        provider: str | None = None,
+        role: str | None = None,
+    ) -> list[dict]:
+        """Fetch embeddings for candidate message ids across all projects."""
+        if not message_ids:
+            return []
+        self.encryption_context()
+        placeholders = ",".join("?" for _ in message_ids)
+        clauses = [f"m.id IN ({placeholders})"]
+        params: list[object] = list(message_ids)
+        if provider is not None:
+            clauses.append("m.provider = ?")
+            params.append(provider)
+        if role is not None:
+            clauses.append("m.role = ?")
+            params.append(role)
+        where = " AND ".join(clauses)
+        with self.connection() as conn:
+            cur = conn.execute(
+                f"""
+                SELECT m.id AS message_id, m.content, m.provider, m.project,
+                       m.conversation_id, e.id AS embedding_id, e.embedding_json
+                FROM memory_embeddings e
+                JOIN memory_messages m ON e.message_id = m.id
+                WHERE {where}
+                """,
+                params,
+            )
+            return [self._unseal_embedding_dict(r) for r in cur.fetchall()]
+
+    def count_embeddings_cross_project(
+        self,
+        *,
+        provider: str | None = None,
+        role: str | None = None,
+    ) -> int:
+        """Count eligible embeddings across all projects."""
+        with self.connection() as conn:
+            clauses: list[str] = []
+            params: list[object] = []
+            if provider is not None:
+                clauses.append("m.provider = ?")
+                params.append(provider)
+            if role is not None:
+                clauses.append("m.role = ?")
+                params.append(role)
+            where = (" AND ".join(clauses)) if clauses else "1=1"
+            row = conn.execute(
+                f"""
+                SELECT COUNT(*) AS c
+                FROM memory_embeddings e
+                JOIN memory_messages m ON e.message_id = m.id
+                WHERE {where}
+                """,
+                params,
+            ).fetchone()
+            return int(row["c"])
+
+    def select_candidate_message_ids_cross_project(
+        self,
+        *,
+        terms: list[str],
+        limit: int,
+        provider: str | None = None,
+        role: str | None = None,
+    ) -> list[int]:
+        """Rank message ids by term overlap across all projects."""
+        from .search_index import select_candidate_message_ids
+
+        if not terms or limit <= 0:
+            return []
+        self.encryption_context()
+        placeholders = ",".join("?" for _ in terms)
+        clauses = [f"t.term IN ({placeholders})"]
+        params: list[object] = list(terms)
+        if provider is not None:
+            clauses.append("m.provider = ?")
+            params.append(provider)
+        if role is not None:
+            clauses.append("m.role = ?")
+            params.append(role)
+        clauses.append(
+            "EXISTS (SELECT 1 FROM memory_embeddings e WHERE e.message_id = m.id)"
+        )
+        where = " AND ".join(clauses)
+        params.append(int(limit))
+        with self.connection() as conn:
+            cur = conn.execute(
+                f"""
+                SELECT t.message_id AS message_id, COUNT(DISTINCT t.term) AS overlap
+                FROM memory_message_terms t
+                JOIN memory_messages m ON m.id = t.message_id
+                WHERE {where}
+                GROUP BY t.message_id
+                ORDER BY overlap DESC, t.message_id ASC
+                LIMIT ?
+                """,
+                params,
+            )
+            return [int(r[0]) for r in cur.fetchall()]
 
     def insert_message_returning_id(self, rec: MemoryRecord) -> int | None:
         """Insert one message; return new id, or None if UNIQUE dedupe skipped it."""
@@ -1625,5 +1773,143 @@ class MemoryStore:
                 except Exception:
                     conn.rollback()
                     raise
+
+        return with_busy_retry(_do)
+
+    def rebuild_catalog(self, *, project: str | None = None) -> int:
+        """Rebuild ``chat_catalog`` rows from ``memory_messages``.
+
+        Scans distinct (project, provider, conversation_id) groups and
+        upserts one catalog row per conversation with aggregate stats and
+        a title derived from the earliest message. Returns the number of
+        conversations indexed.
+        """
+        self.encryption_context()
+        with self.connection() as conn:
+            group_clause = ""
+            group_params: list[object] = []
+            if project is not None:
+                group_clause = "WHERE project = ?"
+                group_params.append(project)
+            groups = conn.execute(
+                f"""
+                SELECT DISTINCT project, provider, conversation_id
+                FROM memory_messages
+                {group_clause}
+                """,
+                group_params,
+            ).fetchall()
+
+            now = _utc_now()
+            count = 0
+            for g in groups:
+                gproject, gprovider, gconversation = (
+                    g["project"],
+                    g["provider"],
+                    g["conversation_id"],
+                )
+                stats = conn.execute(
+                    """
+                    SELECT COUNT(*) AS message_count,
+                           MIN(timestamp) AS first_message_at,
+                           MAX(timestamp) AS last_message_at
+                    FROM memory_messages
+                    WHERE project = ? AND provider = ? AND conversation_id = ?
+                    """,
+                    (gproject, gprovider, gconversation),
+                ).fetchone()
+                first_row = conn.execute(
+                    """
+                    SELECT id, content
+                    FROM memory_messages
+                    WHERE project = ? AND provider = ? AND conversation_id = ?
+                    ORDER BY timestamp ASC, id ASC
+                    LIMIT 1
+                    """,
+                    (gproject, gprovider, gconversation),
+                ).fetchone()
+                title = None
+                if first_row is not None:
+                    unsealed = self._unseal_message_dict(first_row)
+                    content = str(unsealed.get("content") or "").strip()
+                    title = content[:120] if content else None
+
+                conn.execute(
+                    """
+                    INSERT INTO chat_catalog
+                        (project, provider, conversation_id, title, message_count,
+                         first_message_at, last_message_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(project, provider, conversation_id) DO UPDATE SET
+                        title = excluded.title,
+                        message_count = excluded.message_count,
+                        first_message_at = excluded.first_message_at,
+                        last_message_at = excluded.last_message_at,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        gproject,
+                        gprovider,
+                        gconversation,
+                        title,
+                        int(stats["message_count"]),
+                        stats["first_message_at"],
+                        stats["last_message_at"],
+                        now,
+                    ),
+                )
+                count += 1
+            conn.commit()
+            return count
+
+    def find_catalog(
+        self,
+        *,
+        project: str | None = None,
+        provider: str | None = None,
+        query: str | None = None,
+        limit: int = 50,
+    ) -> list[dict]:
+        """Query the chat catalog, optionally scoped by project/provider/title text."""
+        clauses: list[str] = []
+        params: list[object] = []
+        if project is not None:
+            clauses.append("project = ?")
+            params.append(project)
+        if provider is not None:
+            clauses.append("provider = ?")
+            params.append(provider)
+        if query is not None:
+            clauses.append("title LIKE ?")
+            params.append(f"%{query}%")
+        where = (" AND ".join(clauses)) if clauses else "1=1"
+        params.append(int(limit))
+        with self.connection() as conn:
+            cur = conn.execute(
+                f"""
+                SELECT project, provider, conversation_id, title, message_count,
+                       first_message_at, last_message_at, updated_at
+                FROM chat_catalog
+                WHERE {where}
+                ORDER BY last_message_at DESC
+                LIMIT ?
+                """,
+                params,
+            )
+            return [dict(r) for r in cur.fetchall()]
+
+    def catalog_stats(self) -> dict[str, int]:
+        """Return aggregate catalog stats: total conversations and distinct projects."""
+        with self.connection() as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) AS conversations, COUNT(DISTINCT project) AS projects
+                FROM chat_catalog
+                """
+            ).fetchone()
+            return {
+                "conversations": int(row["conversations"]),
+                "projects": int(row["projects"]),
+            }
 
         return with_busy_retry(_do)
