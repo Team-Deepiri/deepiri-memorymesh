@@ -24,7 +24,11 @@ from .tui import run_tui
 from .providers.registry import list_providers
 from .embeddings import Embedder
 
-app = typer.Typer(help="Deepiri MemoryMesh CLI")
+app = typer.Typer(
+    help="Deepiri MemoryMesh CLI",
+    invoke_without_command=True,
+    no_args_is_help=False,
+)
 state_app = typer.Typer(help="Manage shared agent state")
 bundle_app = typer.Typer(help="Export/import portable context bundles")
 package_app = typer.Typer(help="Device scan + portable u-data packaging")
@@ -52,6 +56,18 @@ app.add_typer(mesh_app, name="mesh")
 def _mesh() -> MemoryMesh:
     settings = Settings.load()
     return MemoryMesh(settings)
+
+
+@app.callback(invoke_without_command=True, no_args_is_help=False)
+def _bare_memorymesh(ctx: typer.Context) -> None:
+    """Bare ``memorymesh`` launches the interactive session browser (TTY only)."""
+    if ctx.invoked_subcommand is None:
+        if sys.stdout.isatty():
+            resolved_project = Path.cwd().name or "default"
+            run_tui(default_project=resolved_project)
+        else:
+            typer.echo(ctx.get_help())
+            raise typer.Exit(0)
 
 
 def _report_sync_failures(report: SyncDirectoryReport, *, prefix: str = "") -> None:

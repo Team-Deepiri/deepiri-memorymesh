@@ -81,7 +81,7 @@ def discover_sessions_on_disk(provider: str, workspace: Path) -> list[SessionMat
                             continue
                         item = json.loads(line)
                         if isinstance(item, dict):
-                            preview = _preview_from_record(item)
+                            preview = preview_from_record(item)
                             if preview:
                                 break
                 else:
@@ -107,7 +107,7 @@ def discover_sessions_on_disk(provider: str, workspace: Path) -> list[SessionMat
     return matches
 
 
-def _preview_from_record(item: dict[str, Any]) -> str:
+def preview_from_record(item: dict[str, Any]) -> str:
     for key in ("display", "content", "text"):
         val = item.get(key)
         if isinstance(val, str) and val.strip():

@@ -215,7 +215,28 @@ See [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) for `transfer`, `transfer-deliv
 
 ## TUI
 
-`memorymesh tui` runs the direct local curses UI and does **not** auto-start a detached HTTP server. An already-running compatible loopback service may be detected but is not owned or stopped. Use `memorymesh tui --with-service` for a supervised in-process service that always shuts down when the TUI exits. Long-running HTTP remains `memorymesh serve`.
+Running bare `memorymesh` (no command) on an interactive terminal launches the
+**session browser** — a Textual app for viewing local sessions across every
+provider and project, inspecting a conversation, and transferring or resuming
+context into another provider. On a non-TTY or with any command/flag, bare
+`memorymesh` behaves like the normal CLI (prints help).
+
+The explicit `memorymesh tui` command still works. It runs the direct local
+Textual UI and does **not** auto-start a detached HTTP server. An already-running
+compatible loopback service may be detected but is not owned or stopped. Use
+`memorymesh tui --with-service` for a supervised in-process service that always
+shuts down when the TUI exits. Long-running HTTP remains `memorymesh serve`.
+
+In the browser:
+
+- `enter` inspects the selected session (summary + full transcript)
+- `t` transfers the selected session into another provider's inbox
+- `a` runs project actions (stats, compress, embed, scan & ingest, sync-auto)
+- `/` filters the list, `r` rescans the device, `?` shows all keys
+
+Disk-only sessions (not yet ingested into the memory database) are listed too
+and are ingested on demand when you transfer them. Cursor SQLite chat databases
+appear after ingestion through the normal database conversation list.
 
 ## Integrations
 

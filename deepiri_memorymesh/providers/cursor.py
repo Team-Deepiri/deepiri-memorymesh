@@ -80,9 +80,10 @@ def parse_cursor_file(provider: str, project: str, file_path: Path) -> list[Memo
             )
         return records_from_messages(provider, project, file_path.stem, msgs)
 
-    parsed = json.loads(raw)
-    if isinstance(parsed, dict):
-        conv_id, msgs = _cursor_from_obj(parsed, file_path)
-        if msgs:
-            return records_from_messages(provider, project, conv_id, msgs)
+    if file_path.suffix.lower() == ".json":
+        parsed = json.loads(raw)
+        if isinstance(parsed, dict):
+            conv_id, msgs = _cursor_from_obj(parsed, file_path)
+            if msgs:
+                return records_from_messages(provider, project, conv_id, msgs)
     return parse_generic_file(provider, project, file_path)

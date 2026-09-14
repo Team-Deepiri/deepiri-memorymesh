@@ -1,0 +1,73 @@
+Screen {
+    background: #1a1b26;
+    color: #c0caf5;
+}
+
+#top-bar {
+    height: 1;
+    dock: top;
+    padding: 0 1;
+    background: #24283b;
+}
+
+#project-label {
+    width: 1fr;
+}
+
+#status-label {
+    color: #565f89;
+}
+
+#filter {
+    margin: 1 1 0 1;
+}
+
+DataTable {
+    margin: 0 1;
+    height: 1fr;
+    border: round #3b4261;
+}
+
+#detail-dialog {
+    width: 96;
+    height: 88%;
+    border: round #7aa2f7;
+    padding: 1 2;
+    background: #24283b;
+}
+
+#transfer-dialog,
+#actions-dialog,
+#help-dialog {
+    width: 80;
+    height: auto;
+    border: round #7aa2f7;
+    padding: 1 2;
+    background: #24283b;
+}
+
+.dialog-title {
+    text-style: bold;
+    color: #7aa2f7;
+    margin-bottom: 1;
+}
+
+ModalScreen {
+    background: #0f1120 90%;
+}
+
+Button {
+    margin: 0 1;
+}
+
+#detail-actions,
+#transfer-buttons {
+    height: auto;
+    margin-top: 1;
+}
+
+#detail-body {
+    border: none;
+    background: #1a1b26;
+    height: 1fr;
+}

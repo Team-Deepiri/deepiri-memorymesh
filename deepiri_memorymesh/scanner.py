@@ -10,6 +10,7 @@ from .device_paths import ProviderRoot, discover_provider_roots
 from .models import MemoryRecord
 from .providers import parse_provider_file
 from .providers.cursor_sqlite import find_cursor_databases, parse_cursor_sqlite
+from .session_bridge import preview_from_record
 
 
 @dataclass(slots=True)
@@ -45,6 +46,149 @@ class DeviceScanReport:
                 )
         lines.append(f"\nTotal messages ingested: {self.total_messages}")
         return lines
+
+
+@dataclass(slots=True)
+class DeviceSession:
+    """One on-disk provider session transcript found by a device scan.
+
+    Provides a lightweight, non-destructive view of local sessions before (or
+    without) ingesting anything into the memory database.
+    """
+
+    provider: str
+    conversation_id: str
+    path: Path
+    workspace: str
+    mtime: float
+    preview: str = ""
+
+
+_PROJECT_DIR_MARKERS = ("projects", "project")
+
+
+def _workspace_label(path: Path) -> str:
+    """Derive a human workspace label from a provider session file path."""
+    parts = path.parts
+    for idx, part in enumerate(parts):
+        if part in _PROJECT_DIR_MARKERS and idx + 1 < len(parts):
+            return parts[idx + 1].lstrip("-")
+    return path.parent.name.lstrip("-") or "unknown"
+
+
+def _first_record_from_json(data: object) -> dict | None:
+    if isinstance(data, dict):
+        for key in ("messages", "events", "items", "chat_messages", "conversation"):
+            val = data.get(key)
+            if isinstance(val, list):
+                for item in val:
+                    if isinstance(item, dict):
+                        return item
+                return None
+        return data if data else None
+    if isinstance(data, list):
+        for item in data:
+            if isinstance(item, dict):
+                return item
+    return None
+
+
+def _session_preview(path: Path) -> str:
+    """Short human preview of a session transcript file (never loads whole files).
+
+    JSON/JSONL files are accepted only when their first record looks like a
+    chat message (display/content/text/message keys). Everything else returns
+    the raw head of the file. Returns ``""`` for files with no readable
+    conversation content so callers can skip noise (diffs, snapshots, etc.).
+    """
+    suffix = path.suffix.lower()
+    if suffix in {".jsonl", ".json"}:
+        try:
+            if suffix == ".jsonl":
+                with path.open("r", encoding="utf-8", errors="replace") as fh:
+                    for line in fh:
+                        if not line.strip():
+                            continue
+                        try:
+                            item = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        if isinstance(item, dict):
+                            return (preview_from_record(item) or "")[:160]
+                return ""
+            if path.stat().st_size >= 4 * 1024 * 1024:
+                return ""
+            data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+        except (json.JSONDecodeError, OSError):
+            return ""
+        rec = _first_record_from_json(data)
+        if rec is not None:
+            return (preview_from_record(rec) or "")[:160]
+        return ""
+    try:
+        raw = path.read_text(encoding="utf-8", errors="replace")[:200]
+        return raw.replace("\n", " ").strip()
+    except OSError:
+        return ""
+
+
+def list_device_sessions() -> list[DeviceSession]:
+    """List on-disk provider session transcripts machine-wide.
+
+    Walks the same provider roots as :func:`ingest_device` but is strictly
+    read-only: nothing is parsed into memory records and nothing is written.
+    File-based roots only — Cursor SQLite chat databases surface through the
+    database conversation list once ingested. Results are deduplicated by
+    resolved path and sorted newest-first.
+    """
+    locations = discover_provider_roots()
+    found: dict[Path, DeviceSession] = {}
+
+    def _add_session(provider: str, file_path: Path) -> None:
+        if not file_path.is_file():
+            return
+        if file_path.name == "history.jsonl":
+            return
+        try:
+            key = file_path.resolve(strict=False)
+        except OSError:
+            key = file_path
+        if key in found:
+            return
+        try:
+            mtime = file_path.stat().st_mtime
+        except OSError:
+            mtime = 0.0
+        preview = _session_preview(file_path)
+        if not preview:
+            return
+        found[key] = DeviceSession(
+            provider=provider,
+            conversation_id=file_path.stem,
+            path=file_path,
+            workspace=_workspace_label(file_path),
+            mtime=mtime,
+            preview=preview,
+        )
+
+    for loc in locations:
+        if not loc.exists:
+            continue
+        if loc.kind in {"sqlite", "sqlite_tree"}:
+            continue
+        if loc.path.is_file():
+            _add_session(loc.provider, loc.path)
+            continue
+        if not loc.path.is_dir() or not loc.globs:
+            continue
+        for pattern in loc.globs:
+            norm = pattern[3:] if pattern.startswith("**/") else pattern
+            for fp in loc.path.rglob(norm):
+                _add_session(loc.provider, fp)
+
+    sessions = list(found.values())
+    sessions.sort(key=lambda s: s.mtime, reverse=True)
+    return sessions
 
 
 def scan_device() -> DeviceScanReport:
