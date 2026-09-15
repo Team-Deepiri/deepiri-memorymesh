@@ -13,6 +13,34 @@ def safe_str(value: Any, default: str = "") -> str:
     return str(value)
 
 
+def _plain_text_messages(raw: str) -> list[dict[str, Any]]:
+    messages: list[dict[str, Any]] = []
+    _ROLE_PREFIXES = (
+        ("user:", "user"),
+        ("human:", "user"),
+        ("you:", "user"),
+        ("assistant:", "assistant"),
+        ("ai:", "assistant"),
+        ("bot:", "assistant"),
+        ("system:", "system"),
+        ("hint:", "system"),
+    )
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        lower = stripped.lower()
+        role = "assistant"
+        body = stripped
+        for prefix, mapped in _ROLE_PREFIXES:
+            if lower.startswith(prefix):
+                role = mapped
+                body = stripped.split(":", 1)[1].strip()
+                break
+        messages.append({"role": role, "content": body})
+    return messages
+
+
 def normalize_content(value: Any) -> str:
     if value is None:
         return ""
@@ -96,7 +124,14 @@ def parse_generic_file(provider: str, project: str, file_path: Path) -> list[Mem
                 messages.append(item)
         return records_from_messages(provider_normalized, project, conv_id, messages)
 
-    parsed = json.loads(raw)
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        # Plain-text transcripts (e.g. Cursor agent-transcripts/*.txt) are a
+        # legitimate input format; parse them line-by-line instead of failing.
+        return records_from_messages(
+            provider_normalized, project, file_path.stem, _plain_text_messages(raw)
+        )
     if isinstance(parsed, list):
         conv_id = file_path.stem
         messages = parsed
